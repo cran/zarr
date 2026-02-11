@@ -12,6 +12,17 @@
 #'   extensions. (If you need support for a specific extension, open an issue on
 #'   Github.)
 #'
+#'   When creating array definitions, the default is to use R ordering, meaning
+#'   that a transpose codec is added with the "order" parameters having the
+#'   dimensions in reverse order. If you want to use a different ordering, for
+#'   instance to have a Zarr store with maximum portability, delete the default
+#'   transpose codec or set its ordering to the desired values. Note that the
+#'   shape and chunk_shape parameters are set in reference to the ordering in
+#'   the transpose codec (or the default 0, 1, ... is no transpose codec is
+#'   present), but that within the R environment the shape and chunk shape are
+#'   always set to R ordering. This is necessary to be able to apply array
+#'   operations on the data in R.
+#'
 #'   This class does not care about the "chunk_key_encoding" parameter. This is
 #'   addressed at the level of the store.
 #'
@@ -64,10 +75,10 @@ array_builder <- R6::R6Class('array_builder',
       if (!is.null(private$.data_type) && !is.na(private$.shape[1L])) {
         private$.codecs <- if (private$.portable || length(private$.shape) == 1L)
           # No transpose codec
-          list(zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape))
+          list(bytes = zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape))
         else
-          list(zarr_codec_transpose$new(length(private$.shape)),
-               zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape))
+          list(transpose = zarr_codec_transpose$new(length(private$.shape)),
+               bytes = zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape))
       } else
         private$.codecs <- list()
     }
@@ -102,12 +113,19 @@ array_builder <- R6::R6Class('array_builder',
           # Set properties through the active fields, checking is done there.
           self$shape <- meta$shape
           self$data_type <- meta$data_type
-          self$fill_value <- meta$fill_value
+          self$fill_value <- if (is.character(meta$fill_value))
+            switch(meta$fill_value,
+                   'Infinity'  = Inf,
+                   '-Infinity' = -Inf,
+                   'NaN'       = NaN)
+          else meta$fill_value
           self$chunk_shape <- meta$chunk_grid$configuration$chunk_shape # regular grid only
 
-          private$.codecs <- list() # Remove automatically generated codecs
-          if (length(meta$codecs))
+          if (length(meta$codecs)) {
+            private$.codecs <- list()
             lapply(meta$codecs, function(c) self$add_codec(c$name, c$configuration))
+            names(private$.codecs) <- sapply(meta$codecs, function(c) c$name)
+          }
         }
       }
     },
@@ -159,6 +177,7 @@ array_builder <- R6::R6Class('array_builder',
                     'transpose' = zarr_codec_transpose$new(length(private$.shape), configuration),
                     'bytes' = zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape, configuration),
                     'blosc' = zarr_codec_blosc$new(data_type = private$.data_type, configuration),
+                    'zstd' = zarr_codec_zstd$new(configuration),
                     'gzip' = zarr_codec_gzip$new(configuration),
                     'crc32c' = zarr_codec_crc32c$new())
       if (!inherits(cdc, 'zarr_codec'))
@@ -168,20 +187,20 @@ array_builder <- R6::R6Class('array_builder',
       if (is.null(.position) || .position > len) {
         if (!len) {
           if (cdc$from == 'array')
-            private$.codecs <- list(cdc)
+            private$.codecs <- setNames(list(cdc), cdc$name)
           else
             stop('Codec has incompatible mode to start chains of codecs.', call. = FALSE) #nocov
         } else if (cdc$from == private$.codecs[[len]]$to)
-          private$.codecs <- append(private$.codecs, cdc)
+          private$.codecs <- c(private$.codecs, setNames(list(cdc), cdc$name))
         else
           stop('Codec has incompatible mode to follow previous codec.', call. = FALSE) #nocov
       } else if (.position == 1) {
         if (cdc$from == 'array' && private$.codecs[[1L]]$from == cdc$to)
-          private$.codecs <- append(cdc, private$.codecs)
+          private$.codecs <- c(setNames(list(cdc), cdc$name), private$.codecs)
         else
           stop('First codec must use an "array" mode for input and agree with the following codec.', call. = FALSE) # nocov
       } else if (cdc$from == private$.codecs[[len - 1L]]$to && cdc$to == private$.codecs[[len]]$from)
-        private$.codecs <- append(private$.codecs, cdc, after = len - 1L)
+        private$.codecs <- append(private$.codecs, setNames(list(cdc), cdc$name), after = len - 1L)
       else
         stop('Codec has incompatible mode for inserting at position ', .position, call. = FALSE) # nocov
 
@@ -270,10 +289,12 @@ array_builder <- R6::R6Class('array_builder',
     #' @field fill_value The value in the array of uninitialized data elements.
     #' The `fill_value` has to agree with the `data_type` of the array.
     fill_value = function(value) {
-      if (missing(value))
-        private$.data_type$fill_value
-      else
-        private$.data_type$fill_value <- value
+      if (!is.null(private$.data_type)) {
+        if (missing(value))
+          private$.data_type$fill_value
+        else
+          private$.data_type$fill_value <- value
+      }
     },
 
     #' @field shape The shape of the Zarr array, an integer vector of lengths

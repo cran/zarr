@@ -11,12 +11,30 @@ zarr_array <- R6::R6Class('zarr_array',
     # The data type of the array, a zarr_data_type instance
     .data_type = NULL,
 
+    # The shape of the array in R terms, may be different from the shape in the metadata
+    #.shape = NULL,
+
     # An instance of `chunk_grid_regular` to manage data chunking and I/O.
     .chunking = NULL,
 
-    # The list of codec instances with which to encode a chunk-shaped array into
-    # a storable byte-stream, or decode in the reverse order.
-    .codecs = list()
+    # Returns a list with pre, sep and scalar elements that describe the
+    # chunk key encoding of the array.
+    chunk_key_encoding = function() {
+      if (private$.store$version == 2L) { # This is not entirely correct: every array has a zarr_format setting
+        list(pre = '',
+             sep = private$.metadata$dimension_separator %||% '.',
+             scalar = '0')
+      } else {
+        if (private$.metadata$chunk_key_encoding$name == 'default')
+          list(pre = paste0('c', private$.metadata$chunk_key_encoding$configuration$separator),
+               sep = private$.metadata$chunk_key_encoding$configuration$separator,
+               scalar = 'c')
+        else # v2
+          list(pre = '',
+               sep = private$.metadata$chunk_key_encoding$configuration$separator %||% '.',
+               scalar = '0')
+      }
+    }
   ),
   public = list(
     #' @description Initialize a new array in a Zarr hierarchy. The array must
@@ -38,8 +56,8 @@ zarr_array <- R6::R6Class('zarr_array',
       private$.chunking$data_type <- private$.data_type
       private$.chunking$store <- store
       private$.chunking$array_prefix <- self$prefix
-      private$.chunking$chunk_separator <- metadata$chunk_key_encoding$configuration$separator
       private$.chunking$codecs <- ab$codecs
+      private$.chunking$chunk_encoding <- private$chunk_key_encoding()
     },
 
     #' @description Print a summary of the array to the console.
@@ -76,7 +94,6 @@ zarr_array <- R6::R6Class('zarr_array',
       if (missing(selection))
         selection <- lapply(array_shape, function(d) c(1L, d))
       if (length(selection) == length(array_shape)) {
-        # `data` is a hyperslab of any dimensions
         start <- sapply(selection, min)
         stop  <- sapply(selection, max)
         if (any(start < 1L | start > array_shape | stop > array_shape))
@@ -101,6 +118,7 @@ zarr_array <- R6::R6Class('zarr_array',
       array_shape <- private$.metadata$shape
       if (missing(selection))
         selection <- lapply(dim(data) %||% length(data), function(d) c(1L, d))
+
       nsel <- length(selection)
       if (nsel == length(array_shape)) {
         start <- sapply(selection, min)
