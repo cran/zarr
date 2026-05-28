@@ -54,7 +54,7 @@ open_zarr <- function(location, read_only = FALSE) {
 #' chunked into chunks of length 100 (or less if the array is smaller) and
 #' compressed.
 #' @param x The R object to convert. Must be a vector, matrix or array of a
-#'   numeric or logical type.
+#'   numeric, character or logical type.
 #' @param name Optional. The name of the Zarr array to be created. If omitted,
 #'   an array will be created at the root of the Zarr store.
 #' @param location Optional. If supplied, either an existing [zarr_group] in a
@@ -69,8 +69,8 @@ open_zarr <- function(location, read_only = FALSE) {
 #'   store will be created. If the `location` argument is not given, a Zarr
 #'   object is created in memory.
 #' @return If the `location` argument is a `zarr_group`, the new Zarr array is
-#'   returned. Otherwise, the Zarr object that is newly created and which
-#'   contains the Zarr array, or an error if the Zarr object could not be
+#'   returned. Otherwise, the `zarr` object that is newly created and which
+#'   contains the Zarr array, or an error if the `zarr` object could not be
 #'   created.
 #' @docType methods
 #' @export
@@ -79,13 +79,14 @@ open_zarr <- function(location, read_only = FALSE) {
 #' z <- as_zarr(x)
 #' z
 as_zarr <- function(x, name = NULL, location = NULL) {
-  if (is.numeric(x) || is.logical(x)) {
+  if (is.numeric(x) || is.logical(x) || is.character(x)) {
     # Build the array metadata from x
     ab <- array_builder$new()
     ab$data_type <- switch(storage.mode(x),
-                           'logical' = 'bool',
-                           'integer' = 'int32',
-                           'double'  = 'float64',
+                           'logical'   = 'bool',
+                           'integer'   = 'int32',
+                           'double'    = 'float64',
+                           'character' = 'string',
                            stop('Unsupported data type:', storage.mode(x), call. = FALSE))
     d <- dim(x) %||% length(x)
     ab$shape <- d

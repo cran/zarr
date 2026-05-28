@@ -9,7 +9,7 @@ as_zarr(x, name = NULL, location = NULL)
 }
 \arguments{
 \item{x}{The R object to convert. Must be a vector, matrix or array of a
-numeric or logical type.}
+numeric, character or logical type.}
 
 \item{name}{Optional. The name of the Zarr array to be created. If omitted,
 an array will be created at the root of the Zarr store.}
@@ -28,8 +28,8 @@ object is created in memory.}
 }
 \value{
 If the \code{location} argument is a \code{zarr_group}, the new Zarr array is
-returned. Otherwise, the Zarr object that is newly created and which
-contains the Zarr array, or an error if the Zarr object could not be
+returned. Otherwise, the \code{zarr} object that is newly created and which
+contains the Zarr array, or an error if the \code{zarr} object could not be
 created.
 }
 \description{

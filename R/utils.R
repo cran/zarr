@@ -38,6 +38,27 @@
   paste0('/', sub('/$', '', prefix))
 }
 
+# Parse the metadata to a list. Argument txt is a JSON object.
+# This function has some error correction code to correct for known problems but
+# most malformed JSON objects will fail hard.
+.parse_metadata <- function(txt) {
+  result <- tryCatch(
+    jsonlite::fromJSON(txt, simplifyDataFrame = FALSE),
+    error = function(e) {
+      if (grepl("lexical error", conditionMessage(e))) {
+        txt |>
+          gsub(pattern = ":\\s*-Inf", replacement = ': "-Infinity"', x = _) |>
+          gsub(pattern = ":\\s*Inf",  replacement = ': "Infinity"',  x = _) |>
+          gsub(pattern = ":\\s*NaN",  replacement = ': "NaN"',       x = _) |>
+          jsonlite::fromJSON(simplifyDataFrame = FALSE)
+      } else {
+        stop(e)
+      }
+    }
+  )
+  result
+}
+
 .size_string <- function(size_in_bytes) {
   if (size_in_bytes < 1024) {
     return(paste(size_in_bytes, "Bytes"))
@@ -114,6 +135,13 @@ zarr_domains <- function() {
   as.list(Zarr.domains)
 }
 
+#' List the Zarr conventions supported by this release
+#' @return A `data.frame` with descriptions of supported conventions.
+#' @export
+zarr_conventions <- function() {
+  Zarr.options$conventions
+}
+
 #' Build a Zarr node
 #'
 #' This function polls the registered domains to see if they want to claim and
@@ -138,4 +166,22 @@ zarr_domains <- function() {
     zarr_group$new(name, metadata, parent, store)
   else
     zarr_array$new(name, metadata, parent, store)
+}
+
+# This internal function supports codec management for sharding
+.build_codec_pipeline <- function(codec_configs, data_type, chunk_shape) {
+  codecs <- list()
+  for (cfg in codec_configs) {
+    cdc <- switch(cfg$name,
+      'transpose' = zarr_codec_transpose$new(length(chunk_shape), cfg$configuration),
+      'bytes'     = zarr_codec_bytes$new(data_type, chunk_shape, cfg$configuration),
+      'crc32c'    = zarr_codec_crc32c$new(),
+      'blosc'     = zarr_codec_blosc$new(data_type = data_type, cfg$configuration),
+      'zstd'      = zarr_codec_zstd$new(cfg$configuration),
+      'gzip'      = zarr_codec_gzip$new(cfg$configuration),
+      stop(paste('Unknown codec:', cfg$name), call. = FALSE)
+    )
+    codecs <- c(codecs, stats::setNames(list(cdc), cfg$name))
+  }
+  codecs
 }

@@ -45,7 +45,7 @@ array_builder <- R6::R6Class('array_builder',
     .format = 3L,
 
     .data_type = NULL,
-    .shape = NA,
+    .shape = NA_integer_,
     .chunk_shape = NULL,
     .codecs = list(),
 
@@ -56,16 +56,23 @@ array_builder <- R6::R6Class('array_builder',
     build_metadata = function() {
       meta <- list(zarr_format = private$.format,
                    node_type = "array")
-      if (!is.na(private$.shape[1L]))
+      if (is.na(private$.shape[1L]))
+        meta <- append(meta, list(shape = list()))
+      else
         meta <- append(meta, list(shape = private$.shape))
       if (!is.null(private$.data_type))
         meta <- append(meta, private$.data_type$metadata_fragment())
-      if (!is.null(private$.chunk_shape))
-        meta <- append(meta, private$.chunk_shape$metadata_fragment())
-      if (length(private$.codecs)) {
-        codecs <- lapply(private$.codecs, function(cdc) cdc$metadata_fragment())
-        meta <- append(meta, setNames(list(codecs), 'codecs'))
-      }
+
+      meta <- append(meta, private$.chunk_shape$metadata_fragment())
+      if (!inherits(private$.chunk_shape, 'chunk_grid_sharded') && length(private$.codecs))
+        meta <- append(meta, setNames(list(lapply(private$.codecs,
+                                                  function(cdc) cdc$metadata_fragment())), 'codecs'))
+
+      # meta <- append(meta, private$.chunk_shape$metadata_fragment())
+      # if (length(private$.codecs)) {
+      #   codecs <- lapply(private$.codecs, function(cdc) cdc$metadata_fragment())
+      #   meta <- append(meta, setNames(list(codecs), 'codecs'))
+      # }
       meta
     },
 
@@ -73,15 +80,17 @@ array_builder <- R6::R6Class('array_builder',
     # update the list of codecs. Must have a data_type and a shape before any
     # codecs can be set.
     update_codecs = function() {
-      if (!is.null(private$.data_type) && !is.na(private$.shape[1L])) {
-        private$.codecs <- if (private$.portable || length(private$.shape) == 1L)
-          # No transpose codec
-          list(bytes = zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape))
+      private$.codecs <- if (!is.null(private$.data_type) && !is.na(private$.shape[1L])) {
+        # Transpose?
+        cdc <- if (private$.portable || length(private$.shape) == 1L) list()
+               else list(transpose = zarr_codec_transpose$new(length(private$.shape)))
+        # Bytes or vlen-utf8?
+        if (private$.data_type$data_type == 'string')
+          c(cdc, list(`vlen-utf8` = zarr_codec_vlenutf8$new()))
         else
-          list(transpose = zarr_codec_transpose$new(length(private$.shape)),
-               bytes = zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape))
+          c(cdc, list(bytes = zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape)))
       } else
-        private$.codecs <- list()
+        list()
     }
   ),
   public = list(
@@ -96,7 +105,7 @@ array_builder <- R6::R6Class('array_builder',
     initialize = function(metadata = NULL) {
       if (!is.null(metadata)) {
         if (!is.list(metadata)) {
-          meta <- try(jsonlite::fromJSON(metadata, simplifyDataFrame = FALSE), silent = TRUE)
+          meta <- .parse_metadata(metadata)
           if (inherits(meta, "try-error")) {
             warning('Argument `metadata` is not a valid JSON document. Discarding.', call. = FALSE) # nocov
             meta <- list()
@@ -114,12 +123,7 @@ array_builder <- R6::R6Class('array_builder',
           # Set properties through the active fields, checking is done there.
           self$shape <- meta$shape
           self$data_type <- meta$data_type
-          self$fill_value <- if (is.character(meta$fill_value))
-            switch(meta$fill_value,
-                   'Infinity'  = Inf,
-                   '-Infinity' = -Inf,
-                   'NaN'       = NaN)
-          else meta$fill_value
+          self$fill_value <- meta$fill_value
           self$chunk_shape <- meta$chunk_grid$configuration$chunk_shape # regular grid only
 
           if (length(meta$codecs)) {
@@ -168,19 +172,42 @@ array_builder <- R6::R6Class('array_builder',
     #'   appended at the end of the list of codecs.
     #' @return Self, invisibly.
     add_codec = function(codec, configuration, .position = NULL) {
-      if (is.null(private$.data_type) || is.na(private$.shape[1L]))
-        stop('Codecs can only be added after the array data_type and shape have been set.', call. = FALSE) # nocov
+      if (is.null(private$.data_type))
+        stop('Codecs can only be added after the array data_type has been set.', call. = FALSE) # nocov
 
       if (!is.character(codec) || length(codec) != 1L)
         stop('Codec name must be a single character string.', call. = FALSE) # nocov
 
       cdc <- switch(codec,
-                    'transpose' = zarr_codec_transpose$new(length(private$.shape), configuration),
-                    'bytes' = zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape, configuration),
-                    'blosc' = zarr_codec_blosc$new(data_type = private$.data_type, configuration),
-                    'zstd' = zarr_codec_zstd$new(configuration),
-                    'gzip' = zarr_codec_gzip$new(configuration),
-                    'crc32c' = zarr_codec_crc32c$new())
+        'transpose'        = zarr_codec_transpose$new(length(private$.shape), configuration),
+        'bytes'            = zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape, configuration),
+        'vlen-utf8'        = zarr_codec_vlenutf8$new(),
+        'ucs-4'            = zarr_codec_ucs4$new(private$.chunk_shape$chunk_shape, configuration),
+        'blosc'            = zarr_codec_blosc$new(data_type = private$.data_type, configuration),
+        'zstd'             = zarr_codec_zstd$new(configuration),
+        'gzip'             = zarr_codec_gzip$new(configuration),
+        'crc32c'           = zarr_codec_crc32c$new(),
+        'sharding_indexed' = {
+          outer_shape <- private$.chunk_shape$chunk_shape
+          inner_shape <- as.integer(configuration$chunk_shape)
+          index_loc   <- configuration$index_location %||% 'end'
+
+          inner_codecs <- .build_codec_pipeline(configuration$codecs, private$.data_type, inner_shape)
+          index_codecs <- .build_codec_pipeline(configuration$index_codecs, zarr_data_type$new('uint64'), as.integer(c(prod(outer_shape / inner_shape), 2L)))
+
+          private$.chunk_shape <- chunk_grid_sharded$new(
+            array_shape  = private$.shape,
+            chunk_shape  = outer_shape,
+            inner_shape  = inner_shape,
+            index_loc    = index_loc,
+            inner_codecs = inner_codecs,
+            index_codecs = index_codecs
+          )
+
+          zarr_codec_sharding$new(configuration)
+        },
+        stop(paste('Unknown codec:', codec), call. = FALSE)
+      )
       if (!inherits(cdc, 'zarr_codec'))
         stop('Could not create a codec from the arguments:', codec, call. = FALSE) # nocov
 
@@ -189,12 +216,10 @@ array_builder <- R6::R6Class('array_builder',
         if (!len) {
           if (cdc$from == 'array')
             private$.codecs <- setNames(list(cdc), cdc$name)
-          else
-            stop('Codec has incompatible mode to start chains of codecs.', call. = FALSE) #nocov
+          else stop('Codec has incompatible mode to start chains of codecs.', call. = FALSE) #nocov
         } else if (cdc$from == private$.codecs[[len]]$to)
           private$.codecs <- c(private$.codecs, setNames(list(cdc), cdc$name))
-        else
-          stop('Codec has incompatible mode to follow previous codec.', call. = FALSE) #nocov
+        else stop('Codec has incompatible mode to follow previous codec.', call. = FALSE) #nocov
       } else if (.position == 1) {
         if (cdc$from == 'array' && private$.codecs[[1L]]$from == cdc$to)
           private$.codecs <- c(setNames(list(cdc), cdc$name), private$.codecs)
@@ -235,7 +260,6 @@ array_builder <- R6::R6Class('array_builder',
     #'   otherwise.
     is_valid = function() {
       !is.null(private$.data_type) &&
-      !is.na(private$.shape[1L]) &&
       !is.null(private$.chunk_shape) &&
       length(private$.codecs)
     }
@@ -293,8 +317,39 @@ array_builder <- R6::R6Class('array_builder',
       if (!is.null(private$.data_type)) {
         if (missing(value))
           private$.data_type$fill_value
-        else
-          private$.data_type$fill_value <- value
+        else {
+          dt <- private$.data_type$data_type
+          private$.data_type$fill_value <- if (is.na(value))
+            value
+          else if (is.numeric(value)) {
+            if (dt == 'string')
+              stop('Invalid `fill_value`', call. = FALSE)
+            switch(dt,
+              'int32' = if (value < -.Machine$integer.max || value > .Machine$integer.max) NA_integer_ else as.integer(value),
+              'int64' = ,
+              'uint32' = if (value < -.Machine$integer.max || value > .Machine$integer.max) bit64::NA_integer64_ else bit64::as.integer64(value),
+              'int8' = ,
+              'int16' = ,
+              'uint8' = ,
+              'uint16' = as.integer(value),
+              value  # float — pass through
+              )
+          } else if (is.character(value)) {
+            if (dt %in% c('float32', 'float64')) {
+              switch(value,
+                'Infinity'  = Inf,
+                '-Infinity' = -Inf,
+                'NaN'       = NaN,
+                stop('Invalid `fill_value`', call. = FALSE))
+            } else if (dt == 'string')
+              value
+            else
+              stop('Invalid `fill_value`', call. = FALSE)
+          } else if (is.logical(value) && dt == 'bool')
+            value
+          else
+            stop('Invalid `fill_value`', call. = FALSE)
+        }
       }
     },
 
@@ -305,12 +360,15 @@ array_builder <- R6::R6Class('array_builder',
       if (missing(value))
         private$.shape
       else {
-        if (is.numeric(value) && all((value <- as.integer(value)) > 0L)) {
+        if (!length(value)) { # Scalar value
+          private$.shape <- NA_integer_
+          private$.chunk_shape <- 1L
+        } else if (is.numeric(value) && all((value <- as.integer(value)) > 0L)) {
           private$.shape <- value
           private$.chunk_shape <- chunk_grid_regular$new(value, pmin.int(value, Zarr.options$chunk_length))
-          private$update_codecs()
         } else
           stop('Shape must be an integer vector of lengths along each dimension of the Zarr array.', call. = FALSE) # nocov
+        private$update_codecs()
       }
     },
 
@@ -322,8 +380,10 @@ array_builder <- R6::R6Class('array_builder',
     chunk_shape = function(value) {
       if (missing(value))
         private$.chunk_shape
-      else
+      else {
+        if (!length(value)) value <- 1L # Scalar array
         private$.chunk_shape <- chunk_grid_regular$new(private$.shape, as.integer(value))
+      }
     },
 
     #' @field codec_info (read-only) Retrieve a `data.frame` of registered codec

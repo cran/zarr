@@ -5,35 +5,18 @@
 #'   codecs for data transformation.
 #' @docType class
 chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
-  inherit = zarr_extension,
+  inherit = chunking,
   cloneable = FALSE,
   private = list(
-    # The shape of the array and the chunk grid.
-    .array_shape = NULL,
-    .chunk_shape = NULL,
-
-    # The chunk grid, calculated from the array and chunk shapes
-    .chunk_grid = NULL,
-
-    # Map of [chunk_id] -> chunk_grid_regular_IO instance
-    .chunk_map = NULL,
-
-    # Settings of the chunk key encoding
-    .cke = list(),
-
     # The underlying properties of the array
-    .data_type = NULL,
     .codecs = list(),
-    .permute = NULL, # Permutation of Zarr array ordering to R ordering
-    .store = NULL,
-    .array_prefix = '',
 
     # Set the codecs of this chunk manager
     set_codecs = function(codecs) {
       private$.codecs <- codecs
 
       transp <- codecs$transpose
-      private$.permute <- if (is.null(transp))  # C order
+      if (is.null(transp))  # C order
         rev(seq_along(private$.chunk_shape))
       else if (all(diff(transp$configuration$order) == -1))
         NULL
@@ -43,61 +26,61 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
   ),
   public = list(
     #' @description Initialize a new chunking scheme for an array.
-    #' @param array_shape Integer vector of the array dimensions.
+    #' @param array_shape Integer vector of the array dimensions. This may be
+    #'   `NA` for a scalar array.
     #' @param chunk_shape Integer vector of the dimensions of each chunk.
+    #'   Ignored for a scalar array.
     #' @return An instance of `chunk_grid_regular`.
     initialize = function(array_shape, chunk_shape) {
-      super$initialize('regular')
-
-      if (is.integer(array_shape) && all(array_shape > 0L))
-        private$.array_shape <- array_shape
-      else
-        stop('Array shape must be defined using integer vector of positive values.', call. = FALSE) # nocov
-
-      if (is.integer(chunk_shape) && all(chunk_shape > 0L) && length(array_shape) == length(chunk_shape))
-        private$.chunk_shape <- chunk_shape
-      else
-        stop('Chunk shape is not valid for `array_shape`.', call. = FALSE) # nocov
-
-      private$.chunk_grid <- ceiling(array_shape / chunk_shape)
-      private$.chunk_map <- new.env(parent = emptyenv())
+      super$initialize('regular', array_shape, chunk_shape)
     },
 
     #' @description Print a short description of this chunking scheme to the
     #'   console.
     #' @return Self, invisibly.
     print = function() {
-      cat('<Zarr regular chunk grid> [', paste(private$.chunk_shape, collapse = ', '), ']\n', sep = '')
+      if (private$.scalar)
+        cat('<Zarr regular chunk grid> []\n', sep = '')
+      else
+        cat('<Zarr regular chunk grid> [', paste(private$.chunk_shape, collapse = ', '), ']\n', sep = '')
       invisible(self)
     },
 
     #' @description Return the metadata fragment that describes this chunking
     #'   scheme.
-    #' @return A list with the metadata of this codec.
+    #' @return A list with the metadata of this chunking scheme.
     metadata_fragment = function() {
       list(chunk_grid = list(name = 'regular',
-                             configuration = list(chunk_shape = private$.chunk_shape)))
+                             configuration = list(chunk_shape = if (private$.scalar) list()
+                                                                else private$.chunk_shape)))
     },
 
-    #' @description Read data from the Zarr array into an R object.
+    #' @description Read data from the Zarr array into an R object. The read can
+    #'   span multiple chunks. Reads will be parallelised if
+    #'   `future::plan(multisession)` is set; by default the reading is
+    #'   sequential.
     #' @param start,stop Integer vectors of the same length as the
     #'   dimensionality of the Zarr array, indicating the starting and ending
-    #'   (inclusive) indices of the data along each axis.
+    #'   (inclusive) indices of the data along each axis. These are ignored if
+    #'   the Zarr array is a scalar.
     #' @return A vector, matrix or array of data.
-
     read = function(start, stop) {
-      chunk_shape  <- private$.chunk_shape
+      chunk_shape <- private$.chunk_shape
       nd <- length(chunk_shape)
+
+      if (private$.scalar) {
+        start <- 1L
+        stop  <- 1L
+      }
 
       # Identify chunks touched by the indices
       chunk_start_idx <- floor((start - 1L) / chunk_shape)
-      chunk_end_idx   <- floor((stop - 1L) / chunk_shape)
+      chunk_end_idx   <- floor((stop  - 1L) / chunk_shape)
       grid_idx <- as.matrix(expand.grid(
         lapply(seq_len(nd), function(d) seq(chunk_start_idx[d], chunk_end_idx[d]))))
 
-      # Initialize the data structure
+      # Output array
       data <- if (private$.data_type$Rtype == 'integer64') {
-        # Assuming bit64 is already loaded when reaching here
         if (nd == 1L) bit64::as.integer64(rep(0L, stop - start + 1L))
         else {
           a64 <- rep(bit64::as.integer64(0L), prod(stop - start + 1L))
@@ -109,40 +92,97 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
         else array(private$.data_type$fill_value, stop - start + 1L)
       }
 
-      # Loop over the chunks
-      for (i in seq_len(nrow(grid_idx))) {
+      # Compute chunk geometry for all chunks upfront
+      chunk_info <- lapply(seq_len(nrow(grid_idx)), function(i) {
         cidx <- grid_idx[i, ]
-        chunk_key <- paste0(private$.array_prefix, private$.cke$pre, paste(cidx, collapse = private$.cke$sep))
+        chunk_key <- if (private$.scalar)
+          paste0(private$.array_prefix, private$.cke$scalar)
+        else
+          paste0(private$.array_prefix, private$.cke$pre,
+                 paste(cidx, collapse = private$.cke$sep))
 
-        # Compute slice within the chunk
         chunk_origin  <- cidx * chunk_shape + 1L
         overlap_start <- pmax(start, chunk_origin)
-        overlap_end   <- pmin(stop, chunk_origin + chunk_shape - 1L)
+        overlap_end   <- pmin(stop,  chunk_origin + chunk_shape - 1L)
         overlap_count <- overlap_end - overlap_start + 1L
 
-        # Get or create chunk IO object
-        if (!exists(chunk_key, private$.chunk_map, inherits = FALSE)) {
-          private$.chunk_map[[chunk_key]] <- chunk_grid_regular_IO$new(
-            key = chunk_key,
-            chunk_shape = chunk_shape,
-            dtype = private$.data_type,
-            store = private$.store,
-            codecs = private$.codecs
-          )
-        }
+        list(
+          key           = chunk_key,
+          cidx          = cidx,
+          origin        = chunk_origin,
+          overlap_start = overlap_start,
+          overlap_end   = overlap_end,
+          overlap_count = overlap_count,
+          offset        = overlap_start - chunk_origin
+        )
+      })
 
-        # Read overlapping chunk data and copy into data
-        chunk_data <- private$.chunk_map[[chunk_key]]$read(overlap_start - chunk_origin, overlap_count)
-        data_start <- overlap_start - start
+      # Capture values needed by fetch_chunk() — avoids serialising private env
+      chunk_shape_  <- chunk_shape
+      data_type_    <- private$.data_type
+      store_        <- private$.store
+      codecs_       <- private$.codecs
+
+      fetch_chunk <- function(info) {
+        # Use cached IO instance in sequential context
+        io <- chunk_grid_regular_IO$new(
+          key        = info$key,
+          chunk_shape = chunk_shape_,
+          dtype      = data_type_,
+          store      = store_,
+          codecs     = codecs_
+        )
+        list(
+          chunk_data    = io$read(info$offset, info$overlap_count),
+          overlap_start = info$overlap_start,
+          overlap_end   = info$overlap_end,
+          overlap_count = info$overlap_count
+        )
+      }
+
+      use_parallel <- length(chunk_info) > Zarr.options$parallel_threshold &&
+                      requireNamespace('future.apply', quietly = TRUE) &&
+                      requireNamespace('future', quietly = TRUE) &&
+                      !inherits(future::plan(), 'sequential')
+
+      if (use_parallel) {
+        # Parallel fetch + decode — fresh IO instance per chunk, no cache sharing
+        chunk_results <- future.apply::future_lapply(chunk_info, fetch_chunk,
+                                                     future.seed     = NULL,
+                                                     future.packages = 'zarr')
+      } else {
+        # Sequential — reuse cached IO instances from .chunk_map
+        chunk_results <- lapply(chunk_info, function(info) {
+          if (!exists(info$key, private$.chunk_map, inherits = FALSE))
+            private$.chunk_map[[info$key]] <- chunk_grid_regular_IO$new(
+              key         = info$key,
+              chunk_shape = chunk_shape,
+              dtype       = private$.data_type,
+              store       = private$.store,
+              codecs      = private$.codecs
+            )
+          list(
+            chunk_data    = private$.chunk_map[[info$key]]$read(info$offset, info$overlap_count),
+            overlap_start = info$overlap_start,
+            overlap_end   = info$overlap_end,
+            overlap_count = info$overlap_count
+          )
+        })
+      }
+
+      # Sequential assembly into output array
+      for (res in chunk_results) {
+        data_start <- res$overlap_start - start
         idx <- lapply(seq_len(nd), function(d)
-          seq(data_start[d] + 1L, data_start[d] + overlap_count[d]))
-        data <- do.call(`[<-`, c(list(data), idx, list(value = chunk_data)))
+          seq(data_start[d] + 1L, data_start[d] + res$overlap_count[d]))
+        data <- do.call(`[<-`, c(list(data), idx, list(value = res$chunk_data)))
       }
 
       data
     },
 
-    #' @description Write data to the array.
+    #' @description Write data to the array. Writing data always uses a
+    #'   sequential plan.
     #' @param data An R object with the same dimensionality as the Zarr array.
     #' @param start,stop Integer vectors of the same length as the
     #'   dimensionality of the Zarr array, indicating the starting and ending
@@ -151,6 +191,11 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
     write = function(data, start, stop) {
       chunk_shape  <- private$.chunk_shape
       nd <- length(chunk_shape)
+
+      if (private$.scalar) {
+        start <- 1L
+        stop <- 1L
+      }
 
       # Identify chunks touched by this hyperslab of data
       chunk_start_idx <- floor((start - 1L) / chunk_shape)
@@ -162,7 +207,8 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
       # Loop over the chunks
       for (i in seq_len(nrow(grid_idx))) {
         cidx <- grid_idx[i, ]
-        chunk_key <- paste0(private$.array_prefix, private$.cke$pre, paste(cidx, collapse = private$.cke$sep))
+        chunk_key <- if (private$.scalar) paste0(private$.array_prefix, private$.cke$scalar)
+                     else paste0(private$.array_prefix, private$.cke$pre, paste(cidx, collapse = private$.cke$sep))
 
         # Compute slice within the chunk
         chunk_origin  <- cidx * chunk_shape + 1L
@@ -198,40 +244,6 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
     }
   ),
   active = list(
-    #' @field chunk_shape (read-only) The dimensions of each chunk in the chunk
-    #' grid of the associated array.
-    chunk_shape = function(value) {
-      if (missing(value))
-        private$.chunk_shape
-    },
-
-    #' @field chunk_grid (read-only) The chunk grid of the associated array,
-    #'   i.e. the number of chunks in each dimension.
-    chunk_grid = function(value) {
-      if (missing(value))
-        private$.chunk_grid
-    },
-
-    #' @field chunk_encoding Set or retrieve the chunk key encoding to be used
-    #'   for creating store keys for chunks.
-    chunk_encoding = function(value) {
-      if (missing(value))
-        private$.cke
-      else
-        private$.cke <- value
-    },
-
-    #' @field data_type The data type of the array using the chunking scheme.
-    #'   This is set by the array when starting to use chunking for file I/O.
-    data_type = function(value) {
-      if (missing(value))
-        private$.data_type
-      else if (inherits(value, 'zarr_data_type'))
-        private$.data_type <- value
-      else
-        stop('Must set a valid data type.', call. = FALSE) # nocov
-    },
-
     #' @field codecs The list of codecs used by the chunking scheme. These are
     #' set by the array when starting to use chunking for file I/O. Upon
     #' reading, the list of registered codecs.
@@ -242,26 +254,6 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
         private$set_codecs(value)
       else
         stop('Invalid list of codecs for chunk management.', call. = FALSE) # nocov
-    },
-
-    #' @field store The store of the array using the chunking scheme.
-    #'   This is set by the array when starting to use chunking for file I/O.
-    store = function(value) {
-      if (missing(value))
-        private$.store
-      else if (inherits(value, 'zarr_store'))
-        private$.store <- value
-      else
-        stop('Bad assignment of store.', call. = FALSE) # nocov
-    },
-
-    #' @field array_prefix The prefix of the array using the chunking scheme.
-    #'   This is set by the array when starting to use chunking for file I/O.
-    array_prefix = function(value) {
-      if (missing(value))
-        private$.array_prefix
-      else
-        private$.array_prefix <- value
     }
   )
 )
@@ -401,6 +393,7 @@ chunk_grid_regular_IO <- R6::R6Class('chunk_grid_regular_IO',
 )
 
 # --- S3 functions ---
+
 #' Compact display of a regular chunk grid
 #' @param object A `chunk_grid_regular` instance.
 #' @param ... Ignored.
