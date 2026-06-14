@@ -19,142 +19,222 @@ to calling methods here. The big exception is checking the validity of node
 names.
 }
 \section{Active bindings}{
-\if{html}{\out{<div class="r6-active-bindings">}}
-\describe{
-\item{\code{name}}{(read-only) The name of the node.}
+  \if{html}{\out{<div class="r6-active-bindings">}}
+  \describe{
+    \item{\code{name}}{(read-only) The name of the node.}
 
-\item{\code{parent}}{(read-only) The parent of the node. For a root node this
+    \item{\code{parent}}{(read-only) The parent of the node. For a root node this
 returns \code{NULL}, otherwise this \code{zarr_group} or \code{zarr_array} instance.}
 
-\item{\code{store}}{(read-only) The store of the node.}
+    \item{\code{store}}{(read-only) The store of the node.}
 
-\item{\code{path}}{(read-only) The path of this node, relative to the root node
+    \item{\code{path}}{(read-only) The path of this node, relative to the root node
 of the hierarchy.}
 
-\item{\code{prefix}}{(read-only) The prefix of this node, relative to the root
+    \item{\code{prefix}}{(read-only) The prefix of this node, relative to the root
 node of the hierarchy.}
 
-\item{\code{metadata}}{The metadata document of this node, a \code{list}. CAUTION:
+    \item{\code{metadata}}{The metadata document of this node, a \code{list}. CAUTION:
 Setting a list that is not properly describing this object will render
 the object invalid.}
 
-\item{\code{attributes}}{(read-only) Retrieve the list of attributes of this
+    \item{\code{attributes}}{(read-only) Retrieve the list of attributes of this
 object. Attributes can be added or modified with the \code{set_attribute()}
 method or removed with the \code{delete_attributes()} method.}
-}
-\if{html}{\out{</div>}}
+  }
+  \if{html}{\out{</div>}}
 }
 \section{Methods}{
 \subsection{Public methods}{
-\itemize{
-\item \href{#method-zarr_node-new}{\code{zarr_node$new()}}
-\item \href{#method-zarr_node-print_attributes}{\code{zarr_node$print_attributes()}}
-\item \href{#method-zarr_node-set_attribute}{\code{zarr_node$set_attribute()}}
-\item \href{#method-zarr_node-delete_attributes}{\code{zarr_node$delete_attributes()}}
-\item \href{#method-zarr_node-save}{\code{zarr_node$save()}}
-}
+  \itemize{
+    \item \href{#method-zarr_node-initialize}{\code{zarr_node$new()}}
+    \item \href{#method-zarr_node-print_attributes}{\code{zarr_node$print_attributes()}}
+    \item \href{#method-zarr_node-attribute}{\code{zarr_node$attribute()}}
+    \item \href{#method-zarr_node-set_attribute}{\code{zarr_node$set_attribute()}}
+    \item \href{#method-zarr_node-append_array_attribute}{\code{zarr_node$append_array_attribute()}}
+    \item \href{#method-zarr_node-delete_attribute}{\code{zarr_node$delete_attribute()}}
+    \item \href{#method-zarr_node-save}{\code{zarr_node$save()}}
+  }
 }
 \if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-zarr_node-new"></a>}}
-\if{latex}{\out{\hypertarget{method-zarr_node-new}{}}}
-\subsection{Method \code{new()}}{
-Initialize a new node in a Zarr hierarchy.
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{zarr_node$new(name, metadata, parent, store)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{name}}{The name of the node.}
-
-\item{\code{metadata}}{List with the metadata of the node.}
-
-\item{\code{parent}}{The parent node of this new node. Must be omitted when
+\if{html}{\out{<a id="method-zarr_node-initialize"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_node-initialize}{}}}
+\subsection{\code{zarr_node$new()}}{
+  Initialize a new node in a Zarr hierarchy.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$new(name, metadata, parent, store)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{name}}{The name of the node.}
+      \item{\code{metadata}}{List with the metadata of the node.}
+      \item{\code{parent}}{The parent node of this new node. Must be omitted when
 initializing a root node.}
-
-\item{\code{store}}{The store to persist data in. Ignored if a \code{parent} is
+      \item{\code{store}}{The store to persist data in. Ignored if a \code{parent} is
 specified.}
+    }
+    \if{html}{\out{</div>}}
+  }
 }
-\if{html}{\out{</div>}}
-}
-}
+
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-zarr_node-print_attributes"></a>}}
 \if{latex}{\out{\hypertarget{method-zarr_node-print_attributes}{}}}
-\subsection{Method \code{print_attributes()}}{
-Print the metadata "attributes" to the console. Usually
+\subsection{\code{zarr_node$print_attributes()}}{
+  Print the metadata "attributes" to the console. Usually
 called by the \link{zarr_group} and \link{zarr_array} \code{print()} methods.
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{zarr_node$print_attributes(...)}\if{html}{\out{</div>}}
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$print_attributes(...)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{...}}{Arguments passed to embedded functions. Of particular interest
+is \code{width = .} to specify the maximum width of the columns.}
+    }
+    \if{html}{\out{</div>}}
+  }
 }
 
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{...}}{Arguments passed to embedded functions. Of particular interest
-is \code{width = .} to specify the maximum width of the columns.}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_node-attribute"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_node-attribute}{}}}
+\subsection{\code{zarr_node$attribute()}}{
+  Retrieve a specific attribute by path.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$attribute(name)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{name}}{The name (path) of the attribute to retrieve, using \code{/} as
+separator for nested attributes. Numeric path segments index into array
+attributes (1-based), e.g. \code{"zarr_conventions/2/name"} retrieves the
+\code{name} field of the second convention object.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    The attribute value, or \code{NULL} if not found.
+  }
 }
-\if{html}{\out{</div>}}
-}
-}
+
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-zarr_node-set_attribute"></a>}}
 \if{latex}{\out{\hypertarget{method-zarr_node-set_attribute}{}}}
-\subsection{Method \code{set_attribute()}}{
-Add an attribute to the metadata of the object. If an
+\subsection{\code{zarr_node$set_attribute()}}{
+  Add an attribute to the metadata of the object. If an
 attribute \code{name} already exists, it will be overwritten.
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{zarr_node$set_attribute(name, value)}\if{html}{\out{</div>}}
-}
-
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{name}}{The name of the attribute. The name must begin with a letter
-and be composed of letters, digits, and underscores, with a maximum
-length of 255 characters.}
-
-\item{\code{value}}{The value of the attribute. This can be of any supported
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$set_attribute(name, value)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{name}}{The name of the attribute. The name may be a compound path,
+relative to the "attributes" entry in the metadata, using a slash "/"
+as path separator. Each of the elements in the path (between slashes)
+must begin with a letter and be composed of letters, digits, and
+underscores and can be at most 255 characters long. Missing path
+elements will be created.}
+      \item{\code{value}}{The value of the attribute. This can be of any supported
 type, including a vector or list of values. In general, an attribute
 should be a character value, a numeric value, a logical value, or a
 short vector or list of any of these.}
-}
-\if{html}{\out{</div>}}
-}
-\subsection{Returns}{
-Self, invisibly.
-}
-}
-\if{html}{\out{<hr>}}
-\if{html}{\out{<a id="method-zarr_node-delete_attributes"></a>}}
-\if{latex}{\out{\hypertarget{method-zarr_node-delete_attributes}{}}}
-\subsection{Method \code{delete_attributes()}}{
-Delete attributes. If an attribute in \code{name} is not present
-this method simply returns.
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{zarr_node$delete_attributes(name)}\if{html}{\out{</div>}}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    Self, invisibly.
+  }
 }
 
-\subsection{Arguments}{
-\if{html}{\out{<div class="arguments">}}
-\describe{
-\item{\code{name}}{Vector of names of the attributes to delete.}
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_node-append_array_attribute"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_node-append_array_attribute}{}}}
+\subsection{\code{zarr_node$append_array_attribute()}}{
+  Append an attribute to an array in the metadata of the
+object. If an attribute \code{name} already exists, it will be overwritten.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$append_array_attribute(name, value, after = NULL)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{name}}{The name of the attribute. The name may be a compound path,
+relative to the "attributes" entry in the metadata, using a slash "/"
+as path separator. Each of the elements in the path (between slashes)
+must begin with a letter and be composed of letters, digits, and
+underscores and can be at most 255 characters long. Missing path
+elements will be created.}
+      \item{\code{value}}{The value of the attribute. This can be of any supported
+type, including a vector or list of values. In general, an attribute
+should be a character value, a numeric value, a logical value, or a
+short vector or list of any of these.}
+      \item{\code{after}}{A subscript, after which \code{value} is to be appended. The
+default is \code{NULL}, meaning that \code{value} will be placed after the
+existing values. Specifying \code{after = 0L} will place \code{value} before the
+existing values.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    Self, invisibly.
+  }
 }
-\if{html}{\out{</div>}}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_node-delete_attribute"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_node-delete_attribute}{}}}
+\subsection{\code{zarr_node$delete_attribute()}}{
+  Delete an attribute or array element. If the attribute is
+not present, this method simply returns.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$delete_attribute(name)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{name}}{Character. The name (path) of the attribute to delete, using
+\code{/} as separator for nested attributes, e.g. \code{"first/second/my_att"}.
+The \code{name} is relative to the \code{attributes} entry in the metadata of the
+node. To target an element of a JSON array attribute, append the
+1-based index as the path segment, e.g. \code{"first/second/my_arr/2"} to
+delete the second element in the array, or
+\code{"first/second/my_arr/2/description"} to delete only the \code{description}
+field inside it. This nesting can be arbitrarily deep, including over
+multiple JSON arrays.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    Self, invisibly.
+  }
 }
-\subsection{Returns}{
-Self, invisibly.
-}
-}
+
 \if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-zarr_node-save"></a>}}
 \if{latex}{\out{\hypertarget{method-zarr_node-save}{}}}
-\subsection{Method \code{save()}}{
-Persist any edits to the group or array to the store.
-\subsection{Usage}{
-\if{html}{\out{<div class="r">}}\preformatted{zarr_node$save()}\if{html}{\out{</div>}}
+\subsection{\code{zarr_node$save()}}{
+  Persist any edits to the group or array to the store.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$save()}
+    \if{html}{\out{</div>}}
+  }
 }
 
-}
 }
