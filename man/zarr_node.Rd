@@ -23,8 +23,10 @@ names.
   \describe{
     \item{\code{name}}{(read-only) The name of the node.}
 
-    \item{\code{parent}}{(read-only) The parent of the node. For a root node this
-returns \code{NULL}, otherwise this \code{zarr_group} or \code{zarr_array} instance.}
+    \item{\code{parent}}{The parent of the node. For a root node this returns
+\code{NULL}, otherwise this \code{zarr_group} or \code{zarr_array} instance. CAUTION:
+Setting the parent of a node can invalidate the Zarr hierarchy -
+expert use only.}
 
     \item{\code{store}}{(read-only) The store of the node.}
 
@@ -48,7 +50,11 @@ method or removed with the \code{delete_attributes()} method.}
 \subsection{Public methods}{
   \itemize{
     \item \href{#method-zarr_node-initialize}{\code{zarr_node$new()}}
+    \item \href{#method-zarr_node-post_open}{\code{zarr_node$post_open()}}
     \item \href{#method-zarr_node-print_attributes}{\code{zarr_node$print_attributes()}}
+    \item \href{#method-zarr_node-relative_path}{\code{zarr_node$relative_path()}}
+    \item \href{#method-zarr_node-absolute_path}{\code{zarr_node$absolute_path()}}
+    \item \href{#method-zarr_node-walk_path}{\code{zarr_node$walk_path()}}
     \item \href{#method-zarr_node-attribute}{\code{zarr_node$attribute()}}
     \item \href{#method-zarr_node-set_attribute}{\code{zarr_node$set_attribute()}}
     \item \href{#method-zarr_node-append_array_attribute}{\code{zarr_node$append_array_attribute()}}
@@ -73,10 +79,28 @@ method or removed with the \code{delete_attributes()} method.}
       \item{\code{metadata}}{List with the metadata of the node.}
       \item{\code{parent}}{The parent node of this new node. Must be omitted when
 initializing a root node.}
-      \item{\code{store}}{The store to persist data in. Ignored if a \code{parent} is
+      \item{\code{store}}{The store to persist data in. Ignored if \code{parent} is
 specified.}
     }
     \if{html}{\out{</div>}}
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_node-post_open"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_node-post_open}{}}}
+\subsection{\code{zarr_node$post_open()}}{
+  This method is called automatically after a Zarr store is
+opened to allow for operations after the full hierarchy has been
+established. This is a no-op here, descendant classes with specific
+requirements should implement this method.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$post_open()}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    Self, invisibly.
   }
 }
 
@@ -98,6 +122,92 @@ called by the \link{zarr_group} and \link{zarr_array} \code{print()} methods.
 is \code{width = .} to specify the maximum width of the columns.}
     }
     \if{html}{\out{</div>}}
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_node-relative_path"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_node-relative_path}{}}}
+\subsection{\code{zarr_node$relative_path()}}{
+  Retrieve the relative path from the current node to the
+indicated node or path. In the relative path parent nodes are indicated
+with \code{..}, child nodes start with the child node name down to the
+target node.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$relative_path(to)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{to}}{Either a \code{zarr_node} instance or a character string giving the
+object to which the relative path reference is sought.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    A character string with the relative path from this node. If the
+\code{to} argument is empty or points to this node '.' is returned. Note
+that the relative path has no leading slash (as regular Zarr paths do).
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_node-absolute_path"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_node-absolute_path}{}}}
+\subsection{\code{zarr_node$absolute_path()}}{
+  Retrieve the absolute path from the indicated relative path
+from this node. In the relative path parent nodes are indicated with
+\code{..}, child nodes start with the child node name down to the target
+node.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$absolute_path(dest)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{dest}}{A character string giving the relative path to be made
+absolute calculated from the current node.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    A character string with the absolute Zarr path from this node.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_node-walk_path"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_node-walk_path}{}}}
+\subsection{\code{zarr_node$walk_path()}}{
+  Walk from the current node to a target node indicated by the
+vector of relative path references. A call to this method moves one
+step closer to the target node, followed by a call of this method on
+the next node with the \code{node_names} vector with its first element
+removed. The target is thus iteratively found by walking the Zarr
+hierarchy.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_node$walk_path(node_names)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{node_names}}{A character vector of node names to walk. The first
+element in the vector is resolved: a ".." value moves up to the parent
+of the current node, all other values must resolve to a child of the
+current node. The \code{node_names} vector is easily constructed from a
+relative path to the target node using \code{strsplit(., "/", fixed = TRUE)[[1L]]}.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    The \code{zarr_node} that is found when the \code{node_names} vector is
+fully walked. If the node is not found, an error will be raised.
   }
 }
 

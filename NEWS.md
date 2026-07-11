@@ -1,7 +1,19 @@
+# zarr 0.4.2
+
+- `zarr_node$post_open()` method allows for processing that requires the Zarr hierarchy to be in place.
+- Dynamically set a node in a Zarr hierarchy.
+- `zarr_node$relative_path()` method retrieves the relative path from the node to another node or a path string. `zarr_node$absolute_path()` turns a relative path starting from the current node into an absolute path. `walk_path()` traverses the Zarr hierarchy from the current node to a target node using relative node names, returning the requested node.
+- Set metadata on a node in a memory store.
+- Convention classes are now coded as attribute factories.
+- Zarr package options can now be retrieved and modified with the `zarr_options()` function.
+- Compute optimal chunking sizes from array shape when not set explicitly.
+- In `as_zarr()`, small arrays are not compressed. This is controlled by the `Zarr.options$min_compress` setting.
+- Fix key listing in memory stores.
+
 # zarr 0.4.1
 
 - Hierarchy can now also be printed from any group. Zarr arrays from domain packages may use alternative glyphs.
-- New `attribute()` for `zarr_group` and `zarr_array` instances.
+- New `attribute()` method for `zarr_group` and `zarr_array` instances.
 - Attributes can be nested by specifying a compound path when adding. JSON array attributes can be appended. JSON arrays can be deleted over compound paths, including JSON arrays.
 - Attributes article updated.
 

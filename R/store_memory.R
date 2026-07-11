@@ -76,10 +76,12 @@ zarr_memorystore <- R6::R6Class('zarr_memorystore',
     #'   below the `prefix`.
     list_dir = function(prefix) {
       keys <- names(private$.keys)
-      if (nzchar(prefix))
-        keys[startsWith(keys, prefix)]
-      else
-        keys[!(keys == "root")] # List any root arrays
+      if (nzchar(prefix)) {
+        matches <- keys[startsWith(keys, prefix)]
+        remaining <- substring(matches, nchar(prefix) + 1L)
+        remaining[!grepl("/", remaining)]
+      } else
+        keys[!(keys == "root" | grepl("/", keys))] # List any root arrays
     },
 
     #' @description Retrieve all keys and prefixes with a given prefix.
@@ -154,7 +156,7 @@ zarr_memorystore <- R6::R6Class('zarr_memorystore',
       if (n < 1L)
         stop('Byte-range of request is invalid.', call. = FALSE) # nocov
 
-      return(value[start:(start + n - 1L)])
+      return(value[(start + 1L):(start + n)]) # return(value[start:(start + n - 1L)])
     },
 
     #' @description Retrieve the metadata document at the location indicated by
@@ -165,6 +167,21 @@ zarr_memorystore <- R6::R6Class('zarr_memorystore',
     get_metadata = function(prefix) {
       key <- if (prefix == '/') 'root' else .prefix2key(prefix)
       private$.keys[[key]]
+    },
+
+    #' @description Set the metadata document of the node at the location
+    #'   indicated by the `prefix` argument. The formatting of the metadata
+    #'   should always use the Zarr v.3 format.
+    #' @param prefix The prefix of the node whose metadata document to set.
+    #' @param metadata The metadata to persist, either a `list` or an instance
+    #' of [array_builder].
+    #' @return Self, invisible
+    set_metadata = function(prefix, metadata) {
+      if (inherits(metadata, 'array_builder'))
+        metadata <- metadata$metadata()
+      key <- if (prefix == '/') 'root' else .prefix2key(prefix)
+      private$.keys[[key]] <- metadata
+      invisible(self)
     },
 
     #' @description Create a new group in the store under the specified path.

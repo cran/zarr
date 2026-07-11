@@ -17,22 +17,46 @@
 #' ```
 #' @docType class
 #' @export
-zarr_conv_ref <- R6::R6Class('zarr_conv_ref',
+zarr_convention_ref <- R6::R6Class('zarr_convention_ref',
   inherit = zarr_convention,
   cloneable = FALSE,
   private = list(
     # Optional: URI, preferably locatable, to an external Zarr store containing
     # the referenced object.
-    .uri = character(0),
+    .uri = NULL,
 
     # Mandatory: Path to a Zarr group or array in the current Zarr store
     # (relative path) or the store in the external `.uri` reference (absolute
     # path.
-    .node = character(0),
+    .node = NULL,
 
     # Optional: JSON pointer to a referenced attribute in the metadata of
     # `node`.
-    .attribute = character(0)
+    .attribute = NULL,
+
+    # Validate and parse a JSON Pointer (RFC 6901) into its reference tokens.
+    # @param ptr The character string from the "attribute" field to parse.
+    # @return Character vector of raw tokens, or throws an error.
+    parse_json_pointer = function(ptr) {
+      if (!is.character(ptr) || length(ptr) != 1L)
+        stop('`ptr` must be a single character string', call. = FALSE)
+
+      # Empty string = valid pointer to the root document; no tokens
+      if (ptr == '') return(character(0L))
+
+      if (!startsWith(ptr, '/'))
+        stop('Invalid JSON Pointer: must be empty or start with "/"', call. = FALSE)
+
+      tokens <- strsplit(ptr, '/', fixed = TRUE)[[1L]][-1L]
+      invalid <- grepl('~(?![01])', tokens, perl = TRUE)
+      if (any(invalid))
+        stop('Invalid reference token(s): ', paste(tokens[invalid], collapse = ', '), call. = FALSE)
+
+      tokens <- gsub('~1', '/', tokens, fixed = TRUE)
+      tokens <- gsub('~0', '~', tokens, fixed = TRUE)
+      tokens
+    }
+
   ),
   public = list(
     #' @description Create a new instance of a "ref" convention agent.
@@ -45,84 +69,56 @@ zarr_conv_ref <- R6::R6Class('zarr_conv_ref',
       private$.description <- 'Referencing Zarr objects external to the current Zarr object'
     },
 
-    #' @description Write the data of this instance in the attributes of a Zarr
-    #'   object.
-    #' @param attributes A `list` with Zarr attributes for a group or array. The
-    #'   properties will be written to `attributes`.
-    #' @return The updated attributes.
-    write = function(attributes) {
-      if (!nzchar(private$.node))
-        stop('`node` field must be set.', call. = FALSE)
+    #' @description Set the attributes for this convention for use in a Zarr
+    #'   node.
+    #' @param node Character string. Path to the Zarr node containing the data
+    #'   of interest. The path is relative to the referring node when argument
+    #'   `uri` is missing, absolute from the root of the Zarr store otherwise.
+    #' @param uri Optional, character string. URI of an external Zarr store.
+    #'   Omit for nodes that are in the same local store as the referring node.
+    #' @param attribute Optional, a character string with a JSON pointer to a
+    #'   referenced attribute in the metadata of the referenced `node`.
+    set = function(node, uri, attribute) {
+      if (is.character(node) && length(node) == 1L && nzchar(node))
+        private$.node <- node
+      else
+        stop('Argument `node` must be a character string', call. = FALSE)
 
-      if (nzchar(private$.uri))
-        attributes$uri <- private$.uri
-      attributes$node <- private$.node
-      if (nzchar(private$.attribute))
-        attributes$attribute <- private$.attribute
-      attributes
+      if (!(missing(uri) || is.null(uri))) {
+        if (is.character(uri) && length(uri) == 1L && nzchar(uri)) # FIXME: Must test for URI formatting
+          private$.uri <- uri
+        else
+          stop('Argument `uri` must be a character string representing a URI', call. = FALSE)
+      }
+
+      if (!(missing(attribute) || is.null(attribute))) {
+        if (private$parse_json_pointer(attribute))
+          private$.attribute <- attribute
+        else
+          stop('`attribute` field must be a character string with a valid JSON pointer', call. = FALSE)
+      }
     },
 
-    #' @description Validate and parse a JSON Pointer (RFC 6901) into its
-    #'   reference tokens.
-    #' @param ptr The character string from the "attribute" field to parse.
-    #' @return Character vector of raw tokens, or throws an error.
-    parse_json_pointer = function(ptr) {
-      if (!is.character(ptr) || length(ptr) != 1L)
-        stop('`ptr` must be a single character string.', call. = FALSE)
+    #' @description Clear any attributes that may have been set. Only the
+    #' properties of the convention itself will remain in place.
+    clear = function() {
+      private$.node <- NULL
+      private$.attribute <- NULL
+      private$.uri <- NULL
+    },
 
-      # Empty string = valid pointer to the root document; no tokens
-      if (ptr == '') return(character(0L))
+    #' @description Return the data of this instance for inclusion in the
+    #'   attributes of a Zarr object.
+    #' @return A `list` with Zarr attributes for a group or array.
+    as_list = function() {
+      if (!nzchar(private$.node))
+        stop('`node` field must be set', call. = FALSE)
 
-      if (!startsWith(ptr, '/'))
-        stop('Invalid JSON Pointer: must be empty or start with "/".', call. = FALSE)
-
-      tokens <- strsplit(ptr, '/', fixed = TRUE)[[1L]][-1L]
-      invalid <- grepl('~(?![01])', tokens, perl = TRUE)
-      if (any(invalid))
-        stop('Invalid reference token(s): ', paste(tokens[invalid], collapse = ', '), call. = FALSE)
-
-      tokens <- gsub('~1', '/', tokens, fixed = TRUE)
-      tokens <- gsub('~0', '~', tokens, fixed = TRUE)
-      tokens
+      out <- if (!is.null(private$.uri) && nzchar(private$.uri)) list(uri = private$.uri) else list()
+      out <- c(out, list(node = private$.node))
+      if (!is.null(private$.attribute) && nzchar(private$.attribute))
+        out$attribute <- c(out, list(attribute = private$.attribute))
+      out
     }
-  ),
-  active = list(
-   #' @field uri The "uri" field, a character string of an external Zarr
-   #'   store. The URI must follow RFC 3986 and preferably points to a locatable
-   #'   resource like a file on a file system or a store on a web site that is
-   #'   accessible to the same process that opened up the Zarr store having this
-   #'   reference.
-   uri = function(value) {
-     if (missing(value))
-       private$.uri
-     else if (is.character(value) && length(value) == 1L) # FIXME: Must test for URI formatting
-       private$.uri <- value
-     else
-       stop('`uri` field must be a character string representing a URI.', call. = FALSE)
-   },
-
-   #' @field node The "node" field, a character string giving the path to
-   #'   a group or array in the current Zarr store or in the  store pointed at by the "uri"
-   #'   field.
-   node = function(value) {
-     if (missing(value))
-       private$.node
-     else if (is.character(value) && length(value) == 1L)
-       private$.node <- value
-     else
-       stop('`node` field must be a character string.', call. = FALSE)
-   },
-
-   #' @field attribute The "attribute" field, a character string with a JSON
-   #'   pointer to a referenced attribute in the metadata of the referenced
-   #'   `node`.
-   attribute = function(value) {
-     if (missing(value))
-       private$.attribute
-     else if (self$parse_json_pointer(value))
-       private$.attribute <- value
-     else
-       stop('`attribute` field must be a character string with a valid JSON pointer.', call. = FALSE)
-   }
   )
 )

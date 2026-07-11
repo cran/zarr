@@ -23,12 +23,28 @@ zarr_group <- R6::R6Class('zarr_group',
     #' @param metadata List with the metadata of the group.
     #' @param parent The parent `zarr_group` instance of this new group, can be
     #'   missing or `NULL` for the root group.
-    #' @param store The [zarr_store] instance to persist data in.
+    #' @param store The [zarr_store] instance to persist data in. Ignored if
+    #'   `parent` is specified.
     #' @return An instance of `zarr_group`.
     initialize = function(name, metadata, parent, store) {
       super$initialize(name, metadata, parent, store)
       if (metadata$node_type != 'group')
         stop('Invalid metadata for a group.', call. = FALSE) # nocov
+    },
+
+    #' @description This method is called automatically after a Zarr store is
+    #'   opened to allow for operations after the full hierarchy has been
+    #'   established. All contained children will be called similarly.
+    #' @return Self, invisibly.
+    post_open = function() {
+      # This group first...
+      # No-op for a generic group
+      super$post_open()
+
+      # ... then its children
+      lapply(private$.children, function(child) child$post_open())
+
+      invisible(self)
     },
 
     #' @description Print a summary of the group to the console.
@@ -154,6 +170,20 @@ zarr_group <- R6::R6Class('zarr_group',
             node$get_node(parts[3L])
         }
       }
+    },
+
+    #' @description Set a group or array in the current group. CAUTION: The node
+    #'   must have been persisted to the store for a reliable functioning. All
+    #'   that this method does is update the in-memory representation of the
+    #'   Zarr hierarchy.
+    #' @param node The group or array to insert in this group. CAUTION: If a
+    #'   node with an identical name already exists in this group it will be
+    #'   replaced by the object in this argument.
+    #' @return The `node` object.
+    set_node = function(node) {
+      if (!inherits(node, 'zarr_node'))
+        stop('Bad argument to `set_node()`', call. = FALSE)
+      private$.children[[node$name]] <- node
     },
 
     #' @description Count the number of arrays in this group, optionally
@@ -314,9 +344,8 @@ str.zarr_group <- function(object, ...) {
 #' @docType methods
 #' @examples
 #' z <- create_zarr()
-#' z$add_group("/", "tst")
+#' tst <- z$add_group("/", "tst")
 #' z$add_group("/tst", "subtst")
-#' tst <- z[["/tst"]]
 #' tst[["subtst"]]
 `[[.zarr_group` <- function(x, i) {
   x$get_node(i)

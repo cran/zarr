@@ -36,7 +36,7 @@ zarr_node <- R6::R6Class('zarr_node',
 
     # Check the proposed name of the node before setting it.
     check_name = function(name) {
-      is.character(name) && length(name) == 1L && .is_valid_node_name(name)
+      is.character(name) && length(name) == 1L && is_valid_node_name(name)
     },
 
     # Print one level of attributes to the console. Calls itself recursively to
@@ -136,7 +136,7 @@ zarr_node <- R6::R6Class('zarr_node',
     #' @param metadata List with the metadata of the node.
     #' @param parent The parent node of this new node. Must be omitted when
     #' initializing a root node.
-    #' @param store The store to persist data in. Ignored if a `parent` is
+    #' @param store The store to persist data in. Ignored if `parent` is
     #'   specified.
     initialize = function(name, metadata, parent, store) {
       if (missing(parent) || is.null(parent))
@@ -152,6 +152,15 @@ zarr_node <- R6::R6Class('zarr_node',
       private$.store <- if (is.null(private$.parent)) store else parent$store
     },
 
+    #' @description This method is called automatically after a Zarr store is
+    #'   opened to allow for operations after the full hierarchy has been
+    #'   established. This is a no-op here, descendant classes with specific
+    #'   requirements should implement this method.
+    #' @return Self, invisibly.
+    post_open = function() {
+      invisible(self)
+    },
+
     #' @description Print the metadata "attributes" to the console. Usually
     #' called by the [zarr_group] and [zarr_array] `print()` methods.
     #' @param ... Arguments passed to embedded functions. Of particular interest
@@ -164,6 +173,87 @@ zarr_node <- R6::R6Class('zarr_node',
         else
           cat('\nAttributes:\n')
         private$print_attribute_levels(atts)
+      }
+    },
+
+    #' @description Retrieve the relative path from the current node to the
+    #'   indicated node or path. In the relative path parent nodes are indicated
+    #'   with `..`, child nodes start with the child node name down to the
+    #'   target node.
+    #' @param to Either a `zarr_node` instance or a character string giving the
+    #'   object to which the relative path reference is sought.
+    #' @return A character string with the relative path from this node. If the
+    #'   `to` argument is empty or points to this node '.' is returned. Note
+    #'   that the relative path has no leading slash (as regular Zarr paths do).
+    relative_path = function(to) {
+      if (inherits(to, 'zarr_node')) to <- to$path
+      to_parts <- strsplit(to, '/', fixed = TRUE)[[1L]][-1L]
+      if (!length(to_parts)) return('.')
+      if (any(to_parts %in% c('.', '..')))
+        stop('Invalid `to` path: segments must be valid names', call. = FALSE)
+
+      from_parts <- strsplit(self$path, '/', fixed = TRUE)[[1L]][-1L]
+
+      n <- min(length(from_parts), length(to_parts))
+      common <- 0L
+      while (common < n && from_parts[common + 1L] == to_parts[common + 1L]) {
+        common <- common + 1L
+      }
+
+      parts <- c(rep('..', length(from_parts) - common),
+                 to_parts[seq_len(length(to_parts) - common) + common])
+      if (!length(parts)) '.' else paste(parts, collapse = '/')
+    },
+
+    #' @description Retrieve the absolute path from the indicated relative path
+    #'   from this node. In the relative path parent nodes are indicated with
+    #'   `..`, child nodes start with the child node name down to the target
+    #'   node.
+    #' @param dest A character string giving the relative path to be made
+    #'   absolute calculated from the current node.
+    #' @return A character string with the absolute Zarr path from this node.
+    absolute_path = function(dest) {
+      dest_parts <- strsplit(dest, '/', fixed = TRUE)[[1L]]
+      parts <- strsplit(self$path, '/', fixed = TRUE)[[1L]][-1L]
+
+      for (seg in dest_parts) {
+        if (seg == "..") {
+          parts <- parts[-length(parts)]
+        } else if (seg == ".") {
+          # no-op
+        } else {
+          parts <- c(parts, seg)
+        }
+      }
+
+      if (length(parts) == 0L) "/" else paste0("/", paste(parts, collapse = "/"))
+    },
+
+    #' @description Walk from the current node to a target node indicated by the
+    #'   vector of relative path references. A call to this method moves one
+    #'   step closer to the target node, followed by a call of this method on
+    #'   the next node with the `node_names` vector with its first element
+    #'   removed. The target is thus iteratively found by walking the Zarr
+    #'   hierarchy.
+    #' @param node_names A character vector of node names to walk. The first
+    #'   element in the vector is resolved: a ".." value moves up to the parent
+    #'   of the current node, all other values must resolve to a child of the
+    #'   current node. The `node_names` vector is easily constructed from a
+    #'   relative path to the target node using `strsplit(., "/", fixed = TRUE)[[1L]]`.
+    #' @return The `zarr_node` that is found when the `node_names` vector is
+    #'   fully walked. If the node is not found, an error will be raised.
+    walk_path = function(node_names) {
+      if (!length(node_names)) return(self)
+
+      if (node_names[1L] == '..') {
+        if (is.null(private$.parent))
+          stop('Target Zarr node specified beyond the root node', call. = FALSE)
+        private$.parent$walk_path(node_names[-1L])
+      } else {
+        # Node must be a zarr_group
+        if (!inherits(self, 'zarr_group') || !node_names[1L] %in% names(private$.children))
+          stop('Target Zarr node specifies non-existent child node', call. = FALSE)
+        self$children[[node_names[1L]]]$walk_path(node_names[-1L])
       }
     },
 
@@ -352,11 +442,15 @@ zarr_node <- R6::R6Class('zarr_node',
         private$.name
     },
 
-    #' @field parent (read-only) The parent of the node. For a root node this
-    #' returns `NULL`, otherwise this `zarr_group` or `zarr_array` instance.
+    #' @field parent The parent of the node. For a root node this returns
+    #'   `NULL`, otherwise this `zarr_group` or `zarr_array` instance. CAUTION:
+    #'   Setting the parent of a node can invalidate the Zarr hierarchy -
+    #'   expert use only.
     parent = function(value) {
       if (missing(value))
         private$.parent
+      else if (is.null(value) || inherits(value, 'zarr_node'))
+        private$.parent <- value
     },
 
     #' @field store (read-only) The store of the node.

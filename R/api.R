@@ -3,11 +3,12 @@
 #' This function creates a Zarr v.3 instance, with a store located on the local
 #' file system. The root of the Zarr store will be a group to which other groups
 #' or arrays can be added.
-#' @param location Character string that indicates a location on a file system
-#'   where the data in the Zarr object will be persisted in a Zarr store in a
-#'   directory. The character string may contain UTF-8 characters and/or use a
-#'   file URI format. The Zarr specification recommends that the location use
-#'   the ".zarr" extension to identify the location as a Zarr store.
+#' @param location Optional. Character string that indicates a location on a
+#'   file system where the data in the Zarr object will be persisted in a Zarr
+#'   store in a directory. The character string may contain UTF-8 characters
+#'   and/or use a file URI format. The Zarr specification recommends that the
+#'   location use the ".zarr" extension to identify the location as a Zarr
+#'   store. If missing, a Zarr store will be created in memory.
 #' @return A [zarr] object.
 #' @export
 #' @examples
@@ -90,12 +91,13 @@ as_zarr <- function(x, name = NULL, location = NULL) {
                            stop('Unsupported data type:', storage.mode(x), call. = FALSE))
     d <- dim(x) %||% length(x)
     ab$shape <- d
-    ab$chunk_shape <- pmin.int(d, Zarr.options$chunk_length)
-    ab$add_codec('blosc', list(clevel = 6L))
+    ab$chunk_shape <- .auto_chunk(d)
+    if (prod(d) > Zarr.options$min_compress)
+      ab$add_codec('blosc', list(clevel = 6L))
 
     if (inherits(location, 'zarr_group')) {
       if (missing(name) || is.null(name))
-        stop('Argument `name` must be provided.', call. = FALSE)
+        stop('Argument `name` must be provided', call. = FALSE)
       out <- location
       arr <- out$add_array(name, ab)
     } else {
@@ -108,7 +110,7 @@ as_zarr <- function(x, name = NULL, location = NULL) {
       if (missing(name) || is.null(name) || !nzchar(name)) {
         name <- ''
         store$create_array(name = '', metadata = ab$metadata())
-      } else if (.is_valid_node_name(name)) {
+      } else if (is_valid_node_name(name)) {
         store$create_group(name = '')
         store$create_array(parent = '/', name = name, metadata = ab$metadata())
       } else
@@ -120,8 +122,7 @@ as_zarr <- function(x, name = NULL, location = NULL) {
     }
 
     # Store the data from x
-    selection <- lapply(d, function(x) c(1L, x))
-    arr$write(x, selection)
+    arr$write(x)
 
     if (inherits(location, 'zarr_group'))
       arr

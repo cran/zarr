@@ -45,7 +45,8 @@ zarr_array <- R6::R6Class('zarr_array',
     #' @param metadata List with the metadata of the array.
     #' @param parent The parent `zarr_group` instance of this new array, can be
     #'   missing or `NULL` if the Zarr object should have just this array.
-    #' @param store The [zarr_store] instance to persist data in.
+    #' @param store The [zarr_store] instance to persist data in. Ignored if
+    #'   `parent` is specified.
     #' @return An instance of `zarr_array`.
     initialize = function(name, metadata, parent, store) {
       ab <- array_builder$new(metadata)
@@ -93,7 +94,7 @@ zarr_array <- R6::R6Class('zarr_array',
     #'   types other than logical, any data elements with the `fill_value` of
     #'   the Zarr data type are set to `NA`.
     #' @param selection A list as long as the array has dimensions where each
-    #'   element is a range of indices along the dimension to write. If missing
+    #'   element is a range of indices along the dimension to read. If missing
     #'   or `NULL`, the entire array will be read.
     #' @return A vector, matrix or array of data.
     read = function(selection) {

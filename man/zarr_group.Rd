@@ -34,11 +34,13 @@ hierarchy starting from the current group, as a character vector.}
 \subsection{Public methods}{
   \itemize{
     \item \href{#method-zarr_group-initialize}{\code{zarr_group$new()}}
+    \item \href{#method-zarr_group-post_open}{\code{zarr_group$post_open()}}
     \item \href{#method-zarr_group-print}{\code{zarr_group$print()}}
     \item \href{#method-zarr_group-hierarchy_nodes}{\code{zarr_group$hierarchy_nodes()}}
     \item \href{#method-zarr_group-hierarchy}{\code{zarr_group$hierarchy()}}
     \item \href{#method-zarr_group-build_hierarchy}{\code{zarr_group$build_hierarchy()}}
     \item \href{#method-zarr_group-get_node}{\code{zarr_group$get_node()}}
+    \item \href{#method-zarr_group-set_node}{\code{zarr_group$set_node()}}
     \item \href{#method-zarr_group-count_arrays}{\code{zarr_group$count_arrays()}}
     \item \href{#method-zarr_group-add_group}{\code{zarr_group$add_group()}}
     \item \href{#method-zarr_group-add_array}{\code{zarr_group$add_array()}}
@@ -48,12 +50,15 @@ hierarchy starting from the current group, as a character vector.}
 }
 \if{html}{\out{<details><summary>Inherited methods</summary>
 <ul>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_node" data-id="absolute_path"><a href='../../zarr/html/zarr_node.html#method-zarr_node-absolute_path'><code>zarr_node$absolute_path()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_node" data-id="append_array_attribute"><a href='../../zarr/html/zarr_node.html#method-zarr_node-append_array_attribute'><code>zarr_node$append_array_attribute()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_node" data-id="attribute"><a href='../../zarr/html/zarr_node.html#method-zarr_node-attribute'><code>zarr_node$attribute()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_node" data-id="delete_attribute"><a href='../../zarr/html/zarr_node.html#method-zarr_node-delete_attribute'><code>zarr_node$delete_attribute()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_node" data-id="print_attributes"><a href='../../zarr/html/zarr_node.html#method-zarr_node-print_attributes'><code>zarr_node$print_attributes()</code></a></span></li>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_node" data-id="relative_path"><a href='../../zarr/html/zarr_node.html#method-zarr_node-relative_path'><code>zarr_node$relative_path()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_node" data-id="save"><a href='../../zarr/html/zarr_node.html#method-zarr_node-save'><code>zarr_node$save()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_node" data-id="set_attribute"><a href='../../zarr/html/zarr_node.html#method-zarr_node-set_attribute'><code>zarr_node$set_attribute()</code></a></span></li>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_node" data-id="walk_path"><a href='../../zarr/html/zarr_node.html#method-zarr_node-walk_path'><code>zarr_node$walk_path()</code></a></span></li>
 </ul>
 </details>}}
 \if{html}{\out{<hr>}}
@@ -75,12 +80,30 @@ string \code{""}.}
       \item{\code{metadata}}{List with the metadata of the group.}
       \item{\code{parent}}{The parent \code{zarr_group} instance of this new group, can be
 missing or \code{NULL} for the root group.}
-      \item{\code{store}}{The \link{zarr_store} instance to persist data in.}
+      \item{\code{store}}{The \link{zarr_store} instance to persist data in. Ignored if
+\code{parent} is specified.}
     }
     \if{html}{\out{</div>}}
   }
   \subsection{Returns}{
     An instance of \code{zarr_group}.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_group-post_open"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_group-post_open}{}}}
+\subsection{\code{zarr_group$post_open()}}{
+  This method is called automatically after a Zarr store is
+opened to allow for operations after the full hierarchy has been
+established. All contained children will be called similarly.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_group$post_open()}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    Self, invisibly.
   }
 }
 
@@ -175,6 +198,33 @@ higher up in the hierarchy.}
   \subsection{Returns}{
     The \link{zarr_group} or \link{zarr_array} instance located at \code{path}, or
 \code{NULL} if the \code{path} was not found.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_group-set_node"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_group-set_node}{}}}
+\subsection{\code{zarr_group$set_node()}}{
+  Set a group or array in the current group. CAUTION: The node
+must have been persisted to the store for a reliable functioning. All
+that this method does is update the in-memory representation of the
+Zarr hierarchy.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_group$set_node(node)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{node}}{The group or array to insert in this group. CAUTION: If a
+node with an identical name already exists in this group it will be
+replaced by the object in this argument.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    The \code{node} object.
   }
 }
 
