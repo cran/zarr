@@ -21,7 +21,17 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
   inherit = zarr_store,
   cloneable = FALSE,
   private = list(
-    .root = '.'    # The root of the zarr store as a file system path
+    .root = '.',    # The root of the zarr store as a file system path
+
+    fs_rename = function(old_rel, new_rel) {
+      old_fp <- file.path(private$.root, old_rel)
+      new_fp <- file.path(private$.root, new_rel)
+      parent <- dirname(new_fp)
+      if (!dir.exists(parent)) dir.create(parent, recursive = TRUE, mode = '0771')
+      if (file.exists(new_fp) || dir.exists(new_fp)) unlink(new_fp, recursive = TRUE)
+      file.rename(old_fp, new_fp)
+      invisible(self)
+    }
   ),
   public = list(
     #' @description Create an instance of this class.
@@ -166,6 +176,35 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
       paste0('/', keys)
     },
 
+    #' @description Retrieve all chunk (and shard) keys stored for the array
+    #'   at the given prefix. Used internally to support resizing and
+    #'   promoting arrays.
+    #' @param prefix The prefix of the array whose chunk keys to retrieve.
+    #' @return A character vector of full store keys for chunk/shard files,
+    #'   excluding the array's own metadata document.
+    list_chunks = function(prefix) {
+      base <- file.path(private$.root, prefix)
+      if (!dir.exists(base)) return(character(0L))
+      files <- list.files(base, recursive = TRUE, full.names = FALSE)
+      files <- files[!(basename(files) %in% c('zarr.json', '.zarray', '.zattrs'))]
+      paste0(prefix, files)
+    },
+
+    #' @description Rename a single key on the local file system. A thin
+    #'   wrapper over `rename_prefix()` — a single chunk file is, as far as
+    #'   the file system is concerned, no different from a directory.
+    rename = function(old_key, new_key) {
+      private$fs_rename(old_key, new_key)
+    },
+
+    #' @description Rename a whole subtree of the local file system in one
+    #'   operation. Works identically whether `old_prefix` resolves to a
+    #'   directory (an outer chunk-grid dimension) or to a single chunk file
+    #'   (the innermost dimension) — both are just directory entries.
+    rename_prefix = function(old_prefix, new_prefix) {
+      private$fs_rename(old_prefix, new_prefix)
+    },
+
     #' @description Store a `(key, value)` pair. The key points to a specific
     #'   file (shard or chunk of an array) in a store, rather than a group or an
     #'   array. The key must be relative to the root of the store (so not start
@@ -297,7 +336,8 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     #' @description Set the metadata document of the node at the location
     #'   indicated by the `prefix` argument. The formatting of the metadata
     #'   should always use the Zarr v.3 format, it will be converted internally
-    #'   if the store is Zarr v.2.
+    #'   if the store is Zarr v.2. If the metadata does not include an element
+    #'
     #' @param prefix The prefix of the node whose metadata document to set.
     #' @param metadata The metadata to persist, either a `list` or an instance
     #' of [array_builder].
@@ -308,6 +348,7 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
         metadata <- metadata$metadata()
       if (private$.version == 2L)
         metadata <- private$metadata_v3_to_v2(metadata)
+      metadata <- private$check_cke(metadata)
       jsonlite::write_json(metadata, fn, pretty = TRUE, auto_unbox = TRUE)
       invisible(self)
     },
@@ -375,10 +416,7 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
       if (private$.read_only)
         stop('Cannot write new objects to the Zarr store.', call. = FALSE) # nocov
 
-      cke <- metadata[['chunk_key_encoding']]
-      if (is.null(cke) || !(cke$configuration$separator %in% c('.', '/')))
-        metadata[['chunk_key_encoding']] <- list(name = 'default',
-                                                 configuration = list(separator = private$.chunk_sep))
+      metadata <- private$check_cke(metadata)
 
       if (!nzchar(name)) {
         # Create a root array
@@ -425,6 +463,10 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     separator = function(value) {
       if (missing(value))
         private$.chunk_sep
+    },
+
+    supports_prefix_rename = function(value) {
+      if (missing(value)) TRUE
     }
   )
 )

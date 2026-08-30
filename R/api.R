@@ -26,25 +26,47 @@ create_zarr <- function(location) {
 #' Open a Zarr store
 #'
 #' This function opens a Zarr object, connected to a store located on the local
-#' file system or on a remote server using the HTTP protocol. The Zarr object
-#' can be either v.2 or v.3.
+#' file system or on a remote server using the HTTP or S3 protocol. The Zarr
+#' object can be either v.2 or v.3.
 #' @param location Character string that indicates a location on a file system
-#'   or a HTTP server where the Zarr store is to be found. The character string
-#'   may contain UTF-8 characters and/or use a file URI format.
+#'   or a HTTP or S3 server where the Zarr store is to be found. The character
+#'   string may contain UTF-8 characters and/or use a file URI format.
 #' @param read_only Optional. Logical that indicates if the store is to be
-#'   opened in read-only mode. Default is `FALSE` for a local file system store,
-#'   `TRUE` otherwise.
+#'   opened in read-only mode. Default is ` NULL`, which implies `FALSE` for a
+#'   local file system store, `TRUE` otherwise.
+#' @param protocol Optional, character string. Override automatic protocol
+#'   detection ('local', 'http', or 's3'). Needed for S3-compatible endpoints
+#'   that aren't AWS and don't follow AWS's hostname conventions (MinIO, EMBASSY
+#'   Cloud, Ceph RGW, etc.) - there's no reliable way to recognize these from
+#'   the URL alone, you have to indicate so explicitly rather than have
+#'   `open_zarr()` parse the location.
+#' @param ... Additional protocol-specific parameters passed through to the
+#'   underlying store constructor. For `s3://` and S3 `https://` locations, this
+#'   includes `region`, `profile`, `access_key`/`secret_key`/ `session_token`,
+#'   `endpoint`, and `anonymous` — see [zarr_s3store]. Ignored for local and
+#'   plain HTTP locations.
 #' @return A [zarr] object.
 #' @export
 #' @examples
 #' fn <- system.file("extdata", "africa.zarr", package = "zarr")
 #' africa <- open_zarr(fn)
 #' africa
-open_zarr <- function(location, read_only = FALSE) {
-  store <- switch(.protocol(location),
+open_zarr <- function(location, read_only = NULL, protocol = NULL, ...) {
+  proto <- protocol %||% .protocol(location)
+  if (is.null(read_only))
+    read_only <- proto != 'local'
+
+  store <- switch(proto,
                   'local' = zarr_localstore$new(location, read_only),
-                  'http'  = zarr_httpstore$new(location)
-                 )
+                  'http'  = zarr_httpstore$new(location),
+                  's3'    = {
+                    loc <- .parse_s3_location(location)
+                    zarr_s3store$new(bucket = loc$bucket, prefix = loc$prefix,
+                                     region = loc$region, endpoint = loc$endpoint,
+                                     read_only = read_only, ...)
+                  },
+                  stop('Unsupported location: ', location, call. = FALSE)
+  )
   zarr$new(store)
 }
 
@@ -158,4 +180,58 @@ define_array <- function(data_type, shape) {
   ab$shape <- as.integer(shape)
   ab$add_codec('blosc', list(clevel = 6L))
   ab
+}
+
+#' Get optimal chunking size for an array.
+#'
+#' This function will determine the optimal chunking sizes of the array
+#' dimensions based on weights per dimension.
+#'
+#' @param dim_sizes Integer array of dimension lengths, corresponding to the
+#'   `shape` of the array.
+#' @param weights Optional, numeric vector with weights per dimension, in the
+#'   same order as `dim_sizes`. If omitted, each dimension will have a weight of
+#'   1L, i.e. no preferential chunking on any dimension.
+#' @param chunk_values Optional, integer value given the maximum number of array
+#'   elements per chunk. Default is 4 million, meaning that the chunk size of
+#'   `float32` data is at most 16MB uncompressed.
+#' @return An integer vector with chunk length per dimension in the same order
+#'   as argument `dim_sizes`.
+#' @export
+#' @examples
+#' shape <- c(x = 50000L, y = 350L, time = 8192)
+#'
+#' # Default chunking, approaching the maximum chunk size
+#' optimal_chunking(dim_sizes = shape)
+#'
+#' # Prioritize extractions over the "time" dimension
+#' optimal_chunking(dim_sizes = shape, weights = c(1, 1, 2))
+optimal_chunking <- function(dim_sizes, weights, chunk_values = 4L * 1024L * 1024L) {
+  len <- length(dim_sizes)
+  if (missing(weights))
+    weights <- rep(1, len)
+  else if (length(weights) != len)
+    stop('Length of `dim_sizes` and `weights` arguments must be the same', call. = FALSE)
+  if (any(weights <= 0))
+    stop('Weights must be positive', call. = FALSE)
+
+  W <- sum(weights[dim_sizes > 1L])
+  if (W == 0) # Every dimension is size 1; nothing to partition
+    return(as.integer(dim_sizes))
+
+  x <- chunk_values^(1 / W)
+
+  chunk_sizes <- vector("numeric", len)
+  for (d in seq_len(len))
+    chunk_sizes[d] <- if (dim_sizes[d] == 1L) 1
+                      else min(floor(x^weights[d]), dim_sizes[d])
+
+  # Second pass: align chunk sizes to tile each dimension evenly,
+  # avoiding a near-full chunk plus a small leftover remainder.
+  for (d in seq_len(len))
+    chunk_sizes[d] <-
+      if (chunk_sizes[d] >= dim_sizes[d]) dim_sizes[d]
+      else ceiling(dim_sizes[d] / max(1, round(dim_sizes[d] / chunk_sizes[d])))
+
+  as.integer(chunk_sizes)
 }
