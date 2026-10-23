@@ -38,7 +38,7 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
     .client     = NULL,        # paws.storage S3 client
     .metadata   = list(),      # The metadata of the object at the root of the store
     .nodes      = character(0),# Cached node paths from consolidated metadata, if present
-    .read_only  = FALSE,
+    .anonymous  = NULL,
 
     # Build the full S3 key from a store-relative key.
     full_key = function(key) {
@@ -183,19 +183,20 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
 
       if (is.null(anonymous))
         anonymous <- is.null(profile) && is.null(access_key)
+      private$.anonymous <- isTRUE(anonymous)
+
       if (is.null(path_style))
         path_style <- !is.null(endpoint)
 
       private$.bucket <- bucket
       private$.key_prefix <- if (nzchar(prefix)) sub('/*$', '/', prefix) else ''
-      # private$.read_only is set below via super$initialize()
 
       cfg <- list()
       if (!is.null(region)) cfg$region <- region
       if (!is.null(endpoint)) cfg$endpoint <- endpoint
       if (isTRUE(path_style)) cfg$s3_force_path_style <- TRUE
 
-      if (isTRUE(anonymous)) {
+      if (private$.anonymous) {
         cfg$credentials <- list(anonymous = TRUE)
       } else if (!is.null(access_key)) {
         cfg$credentials <- list(creds = list(
@@ -223,7 +224,7 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
         if (!is.null(meta)) {
           meta <- .parse_metadata(rawToChar(meta))
           if (meta$zarr_consolidated_format != 1L)
-            stop('Unsupported version of consolidated metadata.', call. = FALSE)
+            stop('Unsupported version of consolidated metadata', call. = FALSE) # nocov
 
           format <- meta$metadata$.zgroup$zarr_format
           if (is.null(format) || format != 2L)
@@ -247,6 +248,30 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
       private$.metadata <- meta
 
       super$initialize(read_only = read_only, version = format)
+    },
+
+    #' @description Print a brief summary of the S3 store to the console. This
+    #'   will use `cli` if available.
+    brief = function() {
+      cfg <- private$.client$.internal$config
+      super$brief()
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+        if (isTRUE(nzchar(cfg$region)))
+          cli::cli_alert_info('{.label Region    :} {.text {cfg$region}}')
+        if (isTRUE(nzchar(cfg$endpoint)))
+          cli::cli_alert_info('{.label Endpoint  :} {.text {cfg$endpoint}}')
+        cli::cli_alert_info('{.label Bucket    :} {.text {private$.bucket}}')
+        cli::cli_alert_info('{.label Key prefix:} {.text {private$.key_prefix}}')
+        cli::cli_end(this_div)
+      } else {
+        if (isTRUE(nzchar(cfg$region)))
+          cat('Region    :', cfg$region, '\n')
+        if (isTRUE(nzchar(cfg$endpoint)))
+          cat('Endpoint  :', cfg$endpoint, '\n')
+        cat('Bucket    :', private$.bucket, '\n')
+        cat('Key prefix:', private$.key_prefix, '\n')
+      }
     },
 
     #' @description Check if a key exists in the store.
@@ -327,7 +352,7 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
     list_prefix = function(prefix) {
       keys <- private$list_objects(prefix, delimiter = '')$keys
       keys <- sub(paste0('^', private$.key_prefix), '', keys)
-      paste0('/', keys)
+      if (length(keys)) paste0('/', keys) else character(0)
     },
 
     #' @description Retrieve all keys in the store.
@@ -340,8 +365,10 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
     #'   at the given prefix. Used internally to support resizing and
     #'   promoting arrays.
     #' @param prefix The prefix of the array whose chunk keys to retrieve.
-    #' @return A character vector of full store keys for chunk/shard files,
-    #'   excluding the array's own metadata document.
+    #' @return A character vector of full store keys under `prefix`. This
+    #'   may include keys that are not chunks, such as the metadata document
+    #'   of the array; the chunking scheme of the array selects the chunk
+    #'   keys.
     list_chunks = function(prefix) {
       keys <- private$list_objects(prefix, delimiter = '')$keys
       keys <- sub(paste0('^', private$.key_prefix), '', keys)
@@ -373,7 +400,7 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
         private$.client$head_object(Bucket = private$.bucket, Key = private$full_key(key)),
         error = function(e) {
           if (private$is_not_found(e)) NULL
-          else stop(paste("S3 error on key", key, ":", conditionMessage(e)), call. = FALSE)
+          else stop(paste("S3 error on key", key, ":", conditionMessage(e)), call. = FALSE) # nocov
         }
       )
       if (is.null(res)) stop('Key not found: ', key, call. = FALSE)
@@ -443,7 +470,7 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
             # Key already exists: that's the expected, non-error outcome of
             # set_if_not_exists() when the condition fails, so swallow it.
             if (!private$is_precondition_failed(e))
-              stop(paste("S3 error on key", key, ":", conditionMessage(e)), call. = FALSE)
+              stop(paste("S3 error on key", key, ":", conditionMessage(e)), call. = FALSE) # nocov
           }
         )
       }
@@ -462,6 +489,20 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
     #'   the key does not exist.
     get = function(key, prototype = NULL, byte_range = NULL) {
       private$request(key, byte_range)
+    },
+
+    #' @description Retrieve the values of several keys concurrently.
+    #' @param keys Character vector of keys.
+    #' @return A list as long as `keys` with a raw vector for each key, or
+    #'   `NULL` for a key that is not present in the store.
+    get_many = function(keys) {
+      if (!requireNamespace('curl', quietly = TRUE)) return(super$get_many(keys))
+      urls <- vapply(keys, function(k)
+        private$.client$generate_presigned_url('get_object',
+                                               params = list(Bucket = private$.bucket, Key = private$full_key(k))),
+        character(1L), USE.NAMES = FALSE)
+      if (private$.anonymous) urls <- sub('\\?.*$', '', urls)
+      .fetch_urls(urls)
     },
 
     #' @description Retrieve the metadata document of the node at `prefix`,
@@ -485,14 +526,21 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
         return(.parse_metadata(rawToChar(meta)))
       }
 
+      if (prefix == '/') prefix <- ''
+
       if (is.null(private$.metadata$zarr_consolidated_format)) {
-        atts <- private$request('.zattrs')
-        if (!is.null(atts))
-          atts <- .parse_metadata(rawToChar(atts))
-        meta <- private$metadata_v2_to_v3(private$.metadata, atts)
+        meta <- if (!nzchar(prefix)) private$.metadata
+        else {
+          raw <- private$request(paste0(prefix, '.zgroup')) %||%
+                 private$request(paste0(prefix, '.zarray'))
+          if (is.null(raw)) return(NULL)
+          .parse_metadata(rawToChar(raw))
+        }
+        atts <- private$request(paste0(prefix, '.zattrs'))
+        atts <- if (is.null(atts)) list() else .parse_metadata(rawToChar(atts))
+        meta <- private$metadata_v2_to_v3(meta, atts)
       } else {
         nm <- names(private$.metadata$metadata)
-        if (prefix == '/') prefix <- ''
         m <- paste0(prefix, '.zgroup')
         if (!(m %in% nm)) {
           m <- paste0(prefix, '.zarray')
@@ -519,7 +567,7 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
       if (!private$.read_only) {
         metadata <- private$check_cke(metadata)
         key <- paste0(sub('^/', '', prefix), 'zarr.json')
-        body <- charToRaw(jsonlite::toJSON(metadata, auto_unbox = TRUE, null = 'null'))
+        body <- charToRaw(jsonlite::toJSON(metadata, auto_unbox = TRUE, null = 'null', digits = NA))
         self$set(key, body)
       }
       invisible(self)
@@ -542,7 +590,7 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
     #' @return A list with the metadata of the newly-created group.
     create_group = function(parent, name) {
       if (private$.read_only)
-        stop('Cannot write to a read-only zarr_s3store.', call. = FALSE)
+        stop('Cannot write to a read-only zarr_s3store', call. = FALSE)
       prefix <- paste0(.path2prefix(parent), name, '/')
       meta <- list(zarr_format = 3L, node_type = 'group', attributes = list())
       self$set_metadata(prefix, meta)
@@ -561,8 +609,9 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
     #' @return A list with the metadata of the newly-created array, as written.
     create_array = function(parent, name, metadata) {
       if (private$.read_only)
-        stop('Cannot write to a read-only zarr_s3store.', call. = FALSE)
+        stop('Cannot write to a read-only zarr_s3store', call. = FALSE)
       prefix <- paste0(.path2prefix(parent), name, '/')
+      metadata <- private$check_cke(metadata)
       self$set_metadata(prefix, metadata)
       metadata
     }
@@ -572,6 +621,12 @@ zarr_s3store <- R6::R6Class('zarr_s3store',
     friendlyClassName = function(value) {
       if (missing(value))
         'S3 store'
+    },
+
+    #' @field service (read-only) The S3 connection object.
+    service = function(value) {
+      if (missing(value))
+        private$.client
     },
 
     #' @field root (read-only) The bucket and prefix of the store, as `s3://`.

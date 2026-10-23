@@ -14,6 +14,8 @@ v3](https://img.shields.io/badge/License-MIT-blue.svg)](https://mit-license.org)
 [![Last
 commit](https://img.shields.io/github/last-commit/R-CF/zarr)](https://github.com/R-CF/zarr/commits/main)
 [![R-CMD-check](https://github.com/R-CF/zarr/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/R-CF/zarr/actions/workflows/R-CMD-check.yaml)
+[![Codecov test
+coverage](https://codecov.io/gh/R-CF/zarr/graph/badge.svg)](https://app.codecov.io/gh/R-CF/zarr)
 <!-- badges: end -->
 
 `zarr` is a package to create and access Zarr stores using native R
@@ -34,10 +36,12 @@ library(zarr)
 x <- array(1:400, c(5, 20, 4))
 z <- as_zarr(x)
 z
-#> <Zarr>
-#> Version   : 3 
-#> Store     : memory store 
-#> Arrays    : 1 (single array store)
+#> 
+#> ── Zarr ────────────────────────────────────────────────────────────────────────
+#> ── Memory store - version 3 ────────────────────────────────────────────────────
+#> ✔ Listing ✔ Writing ✔ Deleting ✖ Consolidated metadata
+#> ── Contents ────────────────────────────────────────────────────────────────────
+#> ℹ Arrays: 1 (single array store)
 ```
 
 This uses information from the array (data type, dimensions) in
@@ -55,12 +59,14 @@ array a name that you can later use to retrieve the array and its data.
 fn <- tempfile(fileext = ".zarr")
 z <- as_zarr(x, name = "my_array", location = fn)
 z
-#> <Zarr>
-#> Version   : 3 
-#> Store     : Local file system store 
-#> Location  : /var/folders/gs/s0mmlczn4l7bjbmwfrrhjlt80000gn/T//RtmpKTjmVF/file3a91308e1a64.zarr 
-#> Arrays    : 1 
-#> Total size: 1.08 KB
+#> 
+#> ── Zarr ────────────────────────────────────────────────────────────────────────
+#> ── Local file system store - version 3 ─────────────────────────────────────────
+#> ✔ Listing ✔ Writing ✔ Deleting ✖ Consolidated metadata
+#> ℹ Location  : '/var/folders/gs/s0mmlczn4l7bjbmwfrrhjlt80000gn/T//RtmpHwtBev/file357e7ec47231.zarr'
+#> ℹ Total size: 1.08 KB
+#> ── Contents ────────────────────────────────────────────────────────────────────
+#> ℹ Arrays: 1
 ```
 
 The total size that is printed to the console when inspecting a Zarr
@@ -79,11 +85,12 @@ starting with a slash `"/"` for the root:
 # Get the array using list-like access on the Zarr object
 arr <- z[["/my_array"]]
 arr
-#> <Zarr array> ⌗ my_array 
-#> Path      : /my_array 
-#> Data type : int32 
-#> Shape     : 5 20 4
-#> Chunking  : 5 20 4
+#> 
+#> ── Zarr array ⌗ my_array ───────────────────────────────────────────────────────
+#> ℹ Path      : /my_array
+#> ℹ Data type : int32
+#> ℹ Shape     : 5, 20, 4
+#> ℹ Chunking  : 5, 20, 4
 
 # Index the Zarr array like a regular R array
 # Indexes are 1-based, as usual in R (Zarr specifies everything as 0-based)
@@ -91,14 +98,10 @@ arr[1:2, 11:16, 3]
 #>      [,1] [,2] [,3] [,4] [,5] [,6]
 #> [1,]  251  256  261  266  271  276
 #> [2,]  252  257  262  267  272  277
-```
 
-You can also write to a Zarr array, but the process is a bit more
-complicated (due to a quirk in R):
-
-``` r
-arr$write(-99L, selection = list(2:3, 5:7, 1))
-arr$write(NA_integer_, selection = list(1:5, 1, 1))
+# You can also write to a Zarr array using the usual R way
+arr[2:3, 5:7, 1] <- -99L
+arr[1:5, 1, 1] <- NA_integer_
 arr[, 1:10, 1]
 #>      [,1] [,2] [,3] [,4] [,5] [,6] [,7] [,8] [,9] [,10]
 #> [1,]   NA    6   11   16   21   26   31   36   41    46
@@ -127,14 +130,12 @@ You can install the development version of `zarr` from
 
 ## Development
 
-This package is under active development and should not yet be used for
-production environments. Things may fail and you are advised to ensure
-that you have backups of all data that you put in a Zarr store with this
-package.
+This package is under active development and new features are added
+frequently. The API is stable for the main user-facing code.
 
 Like Zarr itself, this package is modular and allows for additional
-stores, codes, transformers, extensions and domains to be added to this
-basic implementation. If you have specific needs, open an [issue on
+stores, codecs, transformers and domains to be added to this basic
+implementation. If you have specific needs, open an [issue on
 Github](https://github.com/R-CF/zarr/issues) or, better yet, fork the
 code and submit code suggestions via a pull request. Specific guidance
 for developers is being drafted.

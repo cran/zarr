@@ -43,39 +43,75 @@ zarr_object <- R6::R6Class('zarr_object',
     },
 
     # Print one level of attributes to the console. Calls itself recursively to
-    # print nested attributes. This method return a character string, which may
-    # be multi-line.
+    # print nested attributes.
     print_attribute_levels = function(atts, indent = 0L) {
-      pad   <- strrep("  ", indent)
-      width <- max(nchar(names(atts)))
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+        for (nm in names(atts)) {
+          val <- atts[[nm]]
 
-      for (nm in names(atts)) {
-        val <- atts[[nm]]
-
-        if (is.list(val) && !is.null(names(val)) && any(nzchar(names(val)))) {
-          # Named list: JSON object, recurse
-          cat(pad, formatC(nm, width = width, flag = "-"), ":\n", sep = "")
-          private$print_attribute_levels(val, indent + 1L)
-        } else if (is.list(val) && any(vapply(val, is.list, logical(1L)))) {
-          # Unnamed list containing lists: JSON array of objects, recurse each element
-          cat(pad, formatC(nm, width = width, flag = "-"), ":\n", sep = "")
-          for (i in seq_along(val)) {
-            cat(pad, "  [", i, "]\n", sep = "")
-            elem <- val[[i]]
-            if (is.list(elem) && !is.null(names(elem)) && any(nzchar(names(elem))))
-              private$print_attribute_levels(elem, indent + 2L)
-            else
-              cat(pad, "    ", elem, "\n", sep = "")
+          if (is.list(val) && !is.null(names(val)) && any(nzchar(names(val)))) {
+            # Named list: JSON object, recurse
+            cli::cli_li('{.label {nm}:}')
+            sub <- cli::cli_ul()
+            private$print_attribute_levels(val, indent + 1L)
+            cli::cli_end(sub)
+          } else if (is.list(val) && any(vapply(val, is.list, logical(1L)))) {
+            # Unnamed list containing lists: JSON array of objects, recurse each element
+            cli::cli_li('{.label {nm}:}')
+            sub_arr <- cli::cli_ul()
+            for (i in seq_along(val)) {
+              cli::cli_li('{.label Item {i}}')
+              elem <- val[[i]]
+              sub_item <- cli::cli_ul()
+              if (is.list(elem) && !is.null(names(elem)) && any(nzchar(names(elem))))
+                private$print_attribute_levels(elem, indent + 2L)
+              else
+                cli::cli_li('{.text {elem}}')
+              cli::cli_end(sub_item)
+            }
+            cli::cli_end(sub_arr)
+          } else if (is.list(val)) {
+            # Unnamed list of scalars: flat JSON array
+            cli::cli_li('{.label {nm}:} {.text [{paste(unlist(val), collapse = ", ")}]}')
+          } else if (length(val) > 1L) {
+            cli::cli_li('{.label {nm}:} {.text [{paste(val, collapse = ", ")}]}')
+          } else {
+            cli::cli_li('{.label {nm}:} {.text {val}}')
           }
-        } else if (is.list(val)) {
-          # Unnamed list of scalars: flat JSON array
-          cat(pad, formatC(nm, width = width, flag = "-"), ": [",
-              paste(unlist(val), collapse = ", "), "]\n", sep = "")
-        } else if (length(val) > 1L) {
-          cat(pad, formatC(nm, width = width, flag = "-"), ": [",
-              paste(val, collapse = ", "), "]\n", sep = "")
-        } else {
-          cat(pad, formatC(nm, width = width, flag = "-"), ": ", val, "\n", sep = "")
+        }
+        cli::cli_end(this_div)
+      } else {
+        pad   <- strrep("  ", indent)
+        width <- max(nchar(names(atts)))
+
+        for (nm in names(atts)) {
+          att <- formatC(nm, width = width, flag = "-")
+          val <- atts[[nm]]
+
+          if (is.list(val) && !is.null(names(val)) && any(nzchar(names(val)))) {
+            # Named list: JSON object, recurse
+            cat(pad, att, ":\n", sep = "")
+            private$print_attribute_levels(val, indent + 1L)
+          } else if (is.list(val) && any(vapply(val, is.list, logical(1L)))) {
+            # Unnamed list containing lists: JSON array of objects, recurse each element
+            cat(pad, att, ":\n", sep = "")
+            for (i in seq_along(val)) {
+              cat(pad, "  [", i, "]\n", sep = "")
+              elem <- val[[i]]
+              if (is.list(elem) && !is.null(names(elem)) && any(nzchar(names(elem))))
+                private$print_attribute_levels(elem, indent + 2L)
+              else
+                cat(pad, "    ", elem, "\n", sep = "")
+            }
+          } else if (is.list(val)) {
+            # Unnamed list of scalars: flat JSON array
+            cat(pad, att, ": [", paste(unlist(val), collapse = ", "), "]\n", sep = "")
+          } else if (length(val) > 1L) {
+            cat(pad, att, ": [", paste(val, collapse = ", "), "]\n", sep = "")
+          } else {
+            cat(pad, att, ": ", val, "\n", sep = "")
+          }
         }
       }
     },
@@ -88,8 +124,8 @@ zarr_object <- R6::R6Class('zarr_object',
 
       if (is_index) {
         if (idx < 1L || idx > length(lst) + 1L)
-          stop("Index ", idx, " is out of range for array of length ",
-               length(lst), call. = FALSE)
+          stop("Index ", idx, " is out of range for array of length ", # nocov
+               length(lst), call. = FALSE) # nocov
         if (length(path) == 1L) {
           lst[[idx]] <- value
         } else {
@@ -135,10 +171,9 @@ zarr_object <- R6::R6Class('zarr_object',
     print_attributes = function(dirty = FALSE, ...) {
       atts <- private$display_attributes()
       if (length(atts)) {
-        if (dirty)
-          cat('\nAttributes: (*)\n')
-        else
-          cat('\nAttributes:\n')
+        title <- if (dirty) 'Attributes (*)' else 'Attributes'
+        if (is.list(Zarr.options$zarr_theme)) cli::cli_rule('{title}')
+        else cat(paste0('\n', title, '\n'))
         private$print_attribute_levels(atts)
       }
     },
@@ -193,7 +228,7 @@ zarr_object <- R6::R6Class('zarr_object',
 
       path <- strsplit(name, "/", fixed = TRUE)[[1L]]
       path <- path[nzchar(path)]
-      if (!length(path)) stop("'name' must contain at least one non-empty segment", call. = FALSE)
+      if (!length(path)) stop("'name' must contain at least one non-empty segment", call. = FALSE) # nocov
 
       private$set_nested_attribute(atts, path, value)
     },
@@ -291,11 +326,11 @@ zarr_object <- R6::R6Class('zarr_object',
         lst
       }
 
-      if (is.null(atts)) return(invisible(self))
+      if (is.null(atts)) return(atts)
 
       path <- strsplit(name, "/", fixed = TRUE)[[1L]]
       path <- path[nzchar(path)]
-      if (!length(path)) return(invisible(self))
+      if (!length(path)) return(atts)
 
       .delete_nested(atts, path)
     }

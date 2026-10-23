@@ -16,10 +16,9 @@
 #' my_zarr_object$store$root
 #' unlink(fn)
 create_zarr <- function(location) {
-  store <- if (missing(location) || !nzchar(location)) zarr_memorystore$new()
-           else zarr_localstore$new(location)
-  store$create_group(name = '')
-  zarr$new(store)
+  z <- zarr$new(location)
+  zarr_group$new(name = '', parent = z)
+  z
 }
 
 #' Open a Zarr store
@@ -32,7 +31,8 @@ create_zarr <- function(location) {
 #'   string may contain UTF-8 characters and/or use a file URI format.
 #' @param read_only Optional. Logical that indicates if the store is to be
 #'   opened in read-only mode. Default is ` NULL`, which implies `FALSE` for a
-#'   local file system store, `TRUE` otherwise.
+#'   local file system store, `TRUE` otherwise. A Zarr version 2 store is always
+#'   opened in read-only mode.
 #' @param protocol Optional, character string. Override automatic protocol
 #'   detection ('local', 'http', or 's3'). Needed for S3-compatible endpoints
 #'   that aren't AWS and don't follow AWS's hostname conventions (MinIO, EMBASSY
@@ -51,22 +51,12 @@ create_zarr <- function(location) {
 #' africa <- open_zarr(fn)
 #' africa
 open_zarr <- function(location, read_only = NULL, protocol = NULL, ...) {
-  proto <- protocol %||% .protocol(location)
-  if (is.null(read_only))
-    read_only <- proto != 'local'
+  if (is.character(location) && length(location) == 1L &&
+      (protocol %||% .protocol(location)) == 'local' &&
+      !dir.exists(uri_to_path(location)))
+    stop('No Zarr store at location: ', location, call. = FALSE)
 
-  store <- switch(proto,
-                  'local' = zarr_localstore$new(location, read_only),
-                  'http'  = zarr_httpstore$new(location),
-                  's3'    = {
-                    loc <- .parse_s3_location(location)
-                    zarr_s3store$new(bucket = loc$bucket, prefix = loc$prefix,
-                                     region = loc$region, endpoint = loc$endpoint,
-                                     read_only = read_only, ...)
-                  },
-                  stop('Unsupported location: ', location, call. = FALSE)
-  )
-  zarr$new(store)
+  zarr$new(location, read_only, protocol, ...)
 }
 
 #' Convert an R object into a Zarr array
@@ -100,56 +90,35 @@ open_zarr <- function(location, read_only = NULL, protocol = NULL, ...) {
 #' x <- array(1:400, c(5, 20, 4))
 #' z <- as_zarr(x)
 #' z
-as_zarr <- function(x, name = NULL, location = NULL) {
-  if (is.numeric(x) || is.logical(x) || is.character(x)) {
-    # Build the array metadata from x
-    ab <- array_builder$new()
-    ab$data_type <- switch(storage.mode(x),
-                           'logical'   = 'bool',
-                           'integer'   = 'int32',
-                           'double'    = 'float64',
-                           'character' = 'string',
-                           stop('Unsupported data type:', storage.mode(x), call. = FALSE))
-    d <- dim(x) %||% length(x)
-    ab$shape <- d
-    ab$chunk_shape <- .auto_chunk(d)
-    if (prod(d) > Zarr.options$min_compress)
-      ab$add_codec('blosc', list(clevel = 6L))
+as_zarr <- function(x, name = '', location = NULL) {
+  dimnames(x) <- NULL # Avoid dimnames on cached data
 
-    if (inherits(location, 'zarr_group')) {
-      if (missing(name) || is.null(name))
-        stop('Argument `name` must be provided', call. = FALSE)
-      out <- location
-      arr <- out$add_array(name, ab)
-    } else {
-      # Create the store and add the array to make the store valid
-      store <- if (missing(location) || is.null(location) || !nzchar(location))
-        zarr_memorystore$new()
-      else
-        zarr_localstore$new(root = location)
+  # Build the array metadata from x
+  ab <- array_builder$new()
+  ab$data_type_from_storage.mode <- storage.mode(x)
+  d <- dim(x) %||% length(x)
+  ab$shape <- d
+  ab$chunk_shape <- auto_chunk(d)
+  if (prod(d) > Zarr.options$min_compress)
+    ab$add_codec('blosc', list(clevel = 6L))
 
-      if (missing(name) || is.null(name) || !nzchar(name)) {
-        name <- ''
-        store$create_array(name = '', metadata = ab$metadata())
-      } else if (is_valid_node_name(name)) {
-        store$create_group(name = '')
-        store$create_array(parent = '/', name = name, metadata = ab$metadata())
-      } else
-        stop('Invalid name for a Zarr array: ', name, call. = FALSE)
-
-      # Create the Zarr object and get a handle on the newly created array
-      out <- zarr$new(store)
-      arr <- out[[paste0('/', name)]]
-    }
-
-    # Store the data from x
+  # New array in existing store
+  if (inherits(location, 'zarr_group')) {
+    arr <- location$add_array(name, ab)
     arr$write(x)
-
-    if (inherits(location, 'zarr_group'))
-      arr
-    else
-      out
+    return(location)
   }
+
+  out <- zarr$new(location)
+  if (!nzchar(name)) {
+    zarr_array$new(name = '', metadata = ab$metadata(), parent = out)
+    out$root$write(x)
+  } else {
+    zarr_group$new(name = '', parent = out)
+    arr <- zarr_array$new(name = name, metadata = ab$metadata(), parent = out$root)
+    arr$write(x)
+  }
+  out
 }
 
 #' Define the properties of a new Zarr array.

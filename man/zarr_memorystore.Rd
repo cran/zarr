@@ -54,12 +54,15 @@ always a dot '.'.}
     \item \href{#method-zarr_memorystore-create_array}{\code{zarr_memorystore$create_array()}}
   }
 }
-\if{html}{\out{<details open><summary>Inherited methods</summary>
+\if{html}{\out{<details><summary>Inherited methods</summary>
 <ul>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="brief"><a href='../../zarr/html/zarr_store.html#method-zarr_store-brief'><code>zarr_store$brief()</code></a></span></li>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="get_many"><a href='../../zarr/html/zarr_store.html#method-zarr_store-get_many'><code>zarr_store$get_many()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="getsize"><a href='../../zarr/html/zarr_store.html#method-zarr_store-getsize'><code>zarr_store$getsize()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="getsize_prefix"><a href='../../zarr/html/zarr_store.html#method-zarr_store-getsize_prefix'><code>zarr_store$getsize_prefix()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="is_empty"><a href='../../zarr/html/zarr_store.html#method-zarr_store-is_empty'><code>zarr_store$is_empty()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="list"><a href='../../zarr/html/zarr_store.html#method-zarr_store-list'><code>zarr_store$list()</code></a></span></li>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="print"><a href='../../zarr/html/zarr_store.html#method-zarr_store-print'><code>zarr_store$print()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="rename_prefix"><a href='../../zarr/html/zarr_store.html#method-zarr_store-rename_prefix'><code>zarr_store$rename_prefix()</code></a></span></li>
 </ul>
 </details>}}
@@ -236,8 +239,10 @@ promoting arrays.
     \if{html}{\out{</div>}}
   }
   \subsection{Returns}{
-    A character vector of full store keys for chunk/shard files,
-excluding the array's own metadata document.
+    A character vector of full store keys under \code{prefix}. This
+may include keys that are not chunks, such as the metadata document
+of the array; the chunking scheme of the array selects the chunk
+keys.
   }
 }
 
@@ -405,13 +410,13 @@ of \link{array_builder}.}
   Create a new group in the store under the specified path.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
-    \preformatted{zarr_memorystore$create_group(path, name)}
+    \preformatted{zarr_memorystore$create_group(parent, name)}
     \if{html}{\out{</div>}}
   }
   \subsection{Arguments}{
     \if{html}{\out{<div class="arguments">}}
     \describe{
-      \item{\code{path}}{The path to the parent group of the new group. Ignored when
+      \item{\code{parent}}{The path to the parent group of the new group. Ignored when
 creating a root group.}
       \item{\code{name}}{The name of the new group. This may be an empty string \code{""}
 to create a root group. It is an error to supply an empty string if a

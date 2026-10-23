@@ -42,6 +42,7 @@ usually a slash '/'.}
 \subsection{Public methods}{
   \itemize{
     \item \href{#method-zarr_httpstore-initialize}{\code{zarr_httpstore$new()}}
+    \item \href{#method-zarr_httpstore-brief}{\code{zarr_httpstore$brief()}}
     \item \href{#method-zarr_httpstore-exists}{\code{zarr_httpstore$exists()}}
     \item \href{#method-zarr_httpstore-clear}{\code{zarr_httpstore$clear()}}
     \item \href{#method-zarr_httpstore-erase}{\code{zarr_httpstore$erase()}}
@@ -51,6 +52,7 @@ usually a slash '/'.}
     \item \href{#method-zarr_httpstore-set}{\code{zarr_httpstore$set()}}
     \item \href{#method-zarr_httpstore-set_if_not_exists}{\code{zarr_httpstore$set_if_not_exists()}}
     \item \href{#method-zarr_httpstore-get}{\code{zarr_httpstore$get()}}
+    \item \href{#method-zarr_httpstore-get_many}{\code{zarr_httpstore$get_many()}}
     \item \href{#method-zarr_httpstore-get_metadata}{\code{zarr_httpstore$get_metadata()}}
     \item \href{#method-zarr_httpstore-set_metadata}{\code{zarr_httpstore$set_metadata()}}
     \item \href{#method-zarr_httpstore-is_group}{\code{zarr_httpstore$is_group()}}
@@ -65,6 +67,7 @@ usually a slash '/'.}
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="is_empty"><a href='../../zarr/html/zarr_store.html#method-zarr_store-is_empty'><code>zarr_store$is_empty()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="list"><a href='../../zarr/html/zarr_store.html#method-zarr_store-list'><code>zarr_store$list()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="list_chunks"><a href='../../zarr/html/zarr_store.html#method-zarr_store-list_chunks'><code>zarr_store$list_chunks()</code></a></span></li>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="print"><a href='../../zarr/html/zarr_store.html#method-zarr_store-print'><code>zarr_store$print()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="rename"><a href='../../zarr/html/zarr_store.html#method-zarr_store-rename'><code>zarr_store$rename()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="rename_prefix"><a href='../../zarr/html/zarr_store.html#method-zarr_store-rename_prefix'><code>zarr_store$rename_prefix()</code></a></span></li>
 </ul>
@@ -95,6 +98,19 @@ code points.}
   }
   \subsection{Returns}{
     An instance of this class.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_httpstore-brief"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_httpstore-brief}{}}}
+\subsection{\code{zarr_httpstore$brief()}}{
+  Print a brief summary of the HTTP store to the console. This
+will use \code{cli} if available.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_httpstore$brief()}
+    \if{html}{\out{</div>}}
   }
 }
 
@@ -306,6 +322,29 @@ starts after the end of the object, an error will be returned.}
   }
   \subsection{Returns}{
     A raw vector with the data pointed at by the key.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_httpstore-get_many"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_httpstore-get_many}{}}}
+\subsection{\code{zarr_httpstore$get_many()}}{
+  Retrieve the values of several keys concurrently.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_httpstore$get_many(keys)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{keys}}{Character vector of keys.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    A list as long as \code{keys} with a raw vector for each key, or
+\code{NULL} for a key that is not present in the store.
   }
 }
 

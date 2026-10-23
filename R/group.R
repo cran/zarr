@@ -20,16 +20,45 @@ zarr_group <- R6::R6Class('zarr_group',
     #'   exist in the store.
     #' @param name The name of the group. For a root group, this is the empty
     #'   string `""`.
-    #' @param metadata List with the metadata of the group.
+    #' @param metadata Optional. List with the metadata of the group. If omitted
+    #'   it will default to a simple Zarr v.3 group.
     #' @param parent The parent `zarr_group` instance of this new group, can be
-    #'   missing or `NULL` for the root group.
-    #' @param store The [zarr_store] instance to persist data in. Ignored if
-    #'   `parent` is specified.
+    #'   a `zarr` instance for the root group.
+    #' @param no_create_check Optional, logical flag to indicate if a check for
+    #'   existence of the group in the store should be made. Default is `FALSE`.
+    #'   Set to `TRUE` only when existence has been established before calling
+    #'   this method.
     #' @return An instance of `zarr_group`.
-    initialize = function(name, metadata, parent, store) {
-      super$initialize(name, metadata, parent, store)
-      if (metadata$node_type != 'group')
-        stop('Invalid metadata for a group.', call. = FALSE) # nocov
+    initialize = function(name, metadata, parent, no_create_check = FALSE) {
+      supplied <- !missing(metadata)
+      if (supplied && metadata$node_type != 'group')
+        stop('Invalid metadata for a group', call. = FALSE) # nocov
+
+      meta <- NULL
+      if (!no_create_check) {
+        # Create the group in the store if it does not yet exist
+        if (inherits(parent, 'zarr')) {
+          if (is.null(parent$store$get_metadata('/')))
+            meta <- parent$store$create_group(name = '')
+        } else if (is.null(parent$store$get_metadata(paste0(parent$prefix, name, '/')))) {
+          meta <- parent$store$create_group(parent = parent$path, name = name)
+        }
+      }
+
+      super$initialize(name,
+                       if (supplied) metadata else meta %||% list(zarr_format = 3L, node_type = 'group'),
+                       parent)
+      private$.glyph <- '\u2630'
+
+      # Persist supplied metadata when the group is new in this store, or replaces
+      # the default root group of a fresh store
+      if (supplied && !no_create_check) {
+        private$.meta_dirty <- TRUE
+        self$save()
+      }
+
+      if (inherits(parent, 'zarr_group')) parent$set_node(self)
+      else parent$root <- self
     },
 
     #' @description This method is called automatically after a Zarr store is
@@ -50,16 +79,30 @@ zarr_group <- R6::R6Class('zarr_group',
     #' @description Print a summary of the group to the console.
     print = function() {
       name <- if (nzchar(self$name)) self$name else '[root]'
-      cat('<Zarr group>', name, '\n')
-      cat('Path     :', self$path, '\n')
-      if (nzchar(private$.domain))
-        cat('Domain   :', private$.domain, '\n')
-      if (length(self$children)) {
-        arrays <- sapply(self$children, inherits, "zarr_array")
-        if (any(!arrays))
-          cat('Sub-nodes:', paste(names(self$children)[!arrays], collapse = ', '), '\n')
-        if (any(arrays))
-          cat('Arrays   :', paste(names(self$children)[arrays], collapse = ', '))
+      arrays <- vapply(self$children, inherits, logical(1L), "zarr_array", USE.NAMES = FALSE)
+      grp_names <- if (any(!arrays)) paste(names(self$children)[!arrays], collapse = ', ') else character(0L)
+      arr_names <- if (any(arrays)) paste(names(self$children)[arrays], collapse = ', ') else character(0L)
+
+      if (!is.null(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+        cli::cli_h1('Zarr group {.strong {private$.glyph}} {.strong {name}}')
+        cli::cli_alert_info('{.label Path      :} {.text {self$path}}')
+        if (nzchar(private$.domain))
+          cli::cli_alert_info('{.label Domain    :} {.text {private$.domain}}')
+        if (length(grp_names))
+          cli::cli_alert_info('{.label Sub-groups:} {.text {grp_names}}')
+        if (length(arr_names))
+          cli::cli_alert_info('{.label Arrays    :} {.text {arr_names}}')
+        cli::cli_end(this_div)
+      } else {
+        cat('<Zarr group>', private$.glyph, name, '\n')
+        cat('Path      :', self$path, '\n')
+        if (nzchar(private$.domain))
+          cat('Domain    :', private$.domain, '\n')
+        if (length(grp_names))
+          cat('Sub-groups:', grp_names, '\n')
+        if (length(arr_names))
+          cat('Arrays    :', arr_names)
       }
       private$print_details()
       self$print_attributes()
@@ -69,41 +112,57 @@ zarr_group <- R6::R6Class('zarr_group',
     #' @description Collects the hierarchy of the group and its subgroups and
     #'   arrays in a character vector. Usually called from the Zarr object or
     #'   a group to display the full group hierarchy.
-    #' @param idx,total Arguments to control indentation. Should both be 1 (the
+    #' @param idx,total Optional arguments to control indentation. Should both be 1 (the
     #'   default) when called interactively. The values will be updated during
-    #'   recursion when there are groups below the current group.
+    #'   recursion when there are groups below the current group. Ignored if
+    #'   package `cli` is installed.
     hierarchy_nodes = function(idx = 1L, total = 1L) {
-      if (!nzchar(private$.name)) {
-        sep <- ''
-        knot <- ''
-      } else if (idx == total) {
-        sep <- '  '
-        knot <- '\u2514 '
-      } else {
-        sep <- '\u2502 '
-        knot <- '\u251C '
-      }
-
       nm <- private$.name
       if (!nzchar(nm))
         nm <- '/ (root group)'
-      hier <- paste0(knot, '\u2630 ', nm, "\n")
 
-      # Sub-groups
-      ch <- length(private$.children)
-      if (ch > 0L) {
-        sg <- unlist(sapply(1L:ch, function(g) private$.children[[g]]$hierarchy_nodes(g, ch)), use.names = FALSE)
-        hier <- c(hier, paste0(sep, sg))
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = list('ul.group' = list('list-style-type' = private$.glyph)))
+        this_grp <- cli::cli_ul(class = 'group')
+        cli::cli_li('{.group {nm}}')
+        lapply(private$.children, function(g) g$hierarchy_nodes())
+        cli::cli_end(this_grp)
+        cli::cli_end(this_div)
+      } else {
+        # Text output
+        if (!nzchar(private$.name)) {
+          sep <- ''
+          knot <- ''
+        } else if (idx == total) {
+          sep <- '  '
+          knot <- '\u2514 '
+        } else {
+          sep <- '\u2502 '
+          knot <- '\u251C '
+        }
+        hier <- paste0(knot, private$.glyph, ' ', nm, "\n")
+
+        # Sub-groups
+        ch <- length(private$.children)
+        if (ch > 0L) {
+          sg <- unlist(sapply(1L:ch, function(g) private$.children[[g]]$hierarchy_nodes(g, ch)), use.names = FALSE)
+          hier <- c(hier, paste0(sep, sg))
+        }
+        hier
       }
-      hier
     },
 
-    #' @description Print the Zarr hierarchy to the console from the current
-    #'   group.
+    #' @description Print the Zarr hierarchy from the current group to the
+    #'   console.
     hierarchy = function() {
-      cat('<Zarr hierarchy>', self$path, '\n')
-      hier <- self$hierarchy_nodes(1L, 1L)
-      cat(hier, sep = '')
+      if (is.list(Zarr.options$zarr_theme)) {
+        cli::cli_h1('Zarr hierarchy from {private$.glyph} {self$path}')
+        self$hierarchy_nodes()
+      } else {
+        cat('<Zarr hierarchy>', self$path, '\n')
+        hier <- self$hierarchy_nodes(1L, 1L)
+        cat(hier, sep = '')
+      }
     },
 
     #' @description Return the hierarchy contained in the store as a tree of
@@ -121,9 +180,9 @@ zarr_group <- R6::R6Class('zarr_group',
         for (i in 1:len) {
           meta <- try(private$.store$get_metadata(paste0(prefix, dirs[i], '/')), silent = TRUE)
           if (inherits(meta, "try-error"))
-            warning(paste0('Error reading metadata from location ', dirs[i], '. Ignoring.'), call. = FALSE)
+            warning(paste0('Error reading metadata from location ', dirs[i], ' - ignoring'), call. = FALSE) # nocov
           else if (!is.null(meta)) {
-            node <- .buildNode(name = dirs[i], metadata = meta, parent = self, store = self$store)
+            node <- .buildNode(name = dirs[i], metadata = meta, parent = self)
             children[[i]] <- if (inherits(node, 'zarr_node')) node else NULL
             if (meta$node_type == 'group')
               node$build_hierarchy()
@@ -149,7 +208,7 @@ zarr_group <- R6::R6Class('zarr_group',
         return(NULL)
 
       parts <- strsplit(path, '/', fixed = TRUE)[[1L]]
-      self$walk_path(parts)
+      tryCatch(self$walk_path(parts), error = function(e) NULL)
     },
 
     #' @description Set a group or array in the current group. CAUTION: The node
@@ -162,7 +221,7 @@ zarr_group <- R6::R6Class('zarr_group',
     #' @return The `node` object.
     set_node = function(node) {
       if (!inherits(node, 'zarr_node'))
-        stop('Bad argument to `set_node()`', call. = FALSE)
+        stop('Bad argument to `set_node()`', call. = FALSE) # nocov
       private$.children[[node$name]] <- node
     },
 
@@ -183,19 +242,9 @@ zarr_group <- R6::R6Class('zarr_group',
 
     #' @description Add a group to the Zarr hierarchy under the current group.
     #' @param name The name of the new group.
-    #' @return The newly created `zarr_group` instance, or `NULL` if the group
-    #'   could not be created.
+    #' @return The newly created `zarr_group` instance.
     add_group = function(name) {
-      if (!private$check_name(name))
-        stop('Invalid name for a Zarr object: ', name, call. = FALSE) # nocov
-
-      meta <- private$.store$create_group(self$path, name)
-      if (is.list(meta)) {
-        grp <- zarr_group$new(name, meta, self, self$store)
-        private$.children <- append(private$.children, setNames(list(grp), name))
-        grp
-      } else
-        NULL
+      zarr_group$new(name = name, parent = self)
     },
 
     #' @description Add an array to the Zarr hierarchy in the current group.
@@ -206,19 +255,37 @@ zarr_group <- R6::R6Class('zarr_group',
     #' @return The newly created `zarr_array` instance, or `NULL` if the array
     #'   could not be created.
     add_array = function(name, metadata) {
-      if (!private$check_name(name))
-        stop('Invalid name for a Zarr object: ', name, call. = FALSE) # nocov
-
       if (inherits(metadata, 'array_builder'))
         metadata <- metadata$metadata()
-
-      meta <- private$.store$create_array(self$path, name, metadata)
-      if (is.list(meta)) {
-        arr <- zarr_array$new(name, meta, self, self$store)
-        private$.children <- append(private$.children, setNames(list(arr), name))
-        arr
+      if (is.list(metadata)) {
+        zarr_array$new(name = name, metadata = metadata, parent = self)
       } else
         NULL
+    },
+
+    #' @description Copy this group to another group. Child objects, sub-groups
+    #'   and arrays, are recursively visited to be copied too.
+    #' @details This is a method for internal use. It is called by the [zarr]
+    #'   `save_to()` method.
+    #' @param dest A `zarr` or `zarr_group` instance to copy this group into.
+    #' @param verbose A `list` with details for providing feedback; empty if no
+    #'   feedback is requested.
+    #' @return The object in argument `dest` with this group and descendant
+    #'   objects copied into it.
+    copy_to = function(dest, verbose) {
+      grp <- zarr_group$new(self$name, private$.metadata, dest)
+      name <- if (nzchar(self$name)) self$name else '/'
+      if (!is.null(verbose)) {
+        verbose$groups_done <- verbose$groups_done + 1L
+        if (is.list(Zarr.options$zarr_theme)) {
+          this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+          cli::cli_alert_success('{.label Created group} {.group {private$.glyph} {name}} {.minor ({verbose$groups_done}/{verbose$groups})}')
+          cli::cli_end(this_div)
+        } else cat(sprintf('Created group "%s" (%d/%d)\n', name, verbose$groups_done, verbose$groups))
+      }
+      for (c in seq_along(private$.children))
+        private$.children[[c]]$copy_to(grp, verbose)
+      dest
     },
 
     #' @description Delete a group or an array contained by this group. When

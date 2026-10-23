@@ -24,6 +24,8 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     .root = '.',    # The root of the zarr store as a file system path
 
     fs_rename = function(old_rel, new_rel) {
+      if (private$.read_only)
+        stop('Cannot write to a read-only Zarr store', call. = FALSE)
       old_fp <- file.path(private$.root, old_rel)
       new_fp <- file.path(private$.root, new_rel)
       parent <- dirname(new_fp)
@@ -64,7 +66,7 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
         if (!file.exists(meta_path <- file.path(root, 'zarr.json')))
           if (!file.exists(meta_path <- file.path(root, '.zgroup')))
             if (!file.exists(meta_path <- file.path(root, '.zarray')))
-              stop('No Zarr store at the root location.', call. = FALSE) # nocov
+              stop('No Zarr store at the root location', call. = FALSE)
         meta <- .parse_metadata(rawToChar(readBin(meta_path, "raw", file.size(meta_path))))
         format <- meta$zarr_format
         if (is.null(format) || !(format == 3L || format == 2L))
@@ -77,7 +79,23 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
 
       super$initialize(read_only, version = format)
       private$.root <- root
-      private$.supports_consolidated_metadata = FALSE
+      private$.supports_consolidated_metadata <- FALSE
+    },
+
+    #' @description Print a brief summary of the local file system store to the
+    #'   console. This will use `cli` if available.
+    brief = function() {
+      super$brief()
+      size <- .size_string(sum(file.size(list.files(private$.root, full.names = TRUE, recursive = TRUE))))
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+        cli::cli_alert_info('{.label Location  :} {.file {private$.root}}')
+        cli::cli_alert_info('{.label Total size:} {.text {size}}')
+        cli::cli_end(this_div)
+      } else {
+        cat('Location  :', private$.root, '\n')
+        cat('Total size:', size, '\n')
+      }
     },
 
     #' @description Check if a key exists in the store. The key can point to a
@@ -89,23 +107,14 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     },
 
     #' @description Clear the store. Remove all keys and values from the store.
-    #'   Invoking this method deletes affected files on the file system and this
-    #'   action can not be undone. The only file that will remain is "zarr.json"
-    #'   or ".zgroup" (version 2) in the root of this store.
+    #'   WARNING: Invoking this method deletes affected files on the file system
+    #'   and this action can not be undone.
     #' @return `TRUE` if the operation proceeded, `FALSE` otherwise.
     clear = function() {
       if (private$.read_only)
         FALSE
       else {
         unlink(paste0(private$.root, '/*'), recursive = TRUE)
-        if (self$version == 3L)
-          jsonlite::write_json(list(zarr_format = 3, node_type = "group"),
-                               path = file.path(private$.root, 'zarr.json'),
-                               auto_unbox = TRUE, pretty = T)
-        else
-          jsonlite::write_json(list(zarr_format = 2),
-                               path = file.path(private$.root, '.zgroup'),
-                               auto_unbox = TRUE, pretty = T)
         TRUE
       }
     },
@@ -144,11 +153,11 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
         if (self$version == 3L)
           jsonlite::write_json(list(zarr_format = 3, node_type = 'group'),
                                path = file.path(private$.root, paste0(prefix, 'zarr.json')),
-                               auto_unbox = TRUE, pretty = T)
+                               auto_unbox = TRUE, pretty = T, digits = NA)
         else
           jsonlite::write_json(list(zarr_format = 2),
                                path = file.path(private$.root, paste0(prefix, '.zgroup')),
-                               auto_unbox = TRUE, pretty = T)
+                               auto_unbox = TRUE, pretty = T, digits = NA)
         TRUE
       }
     },
@@ -173,15 +182,17 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     list_prefix = function(prefix) {
       keys <- list.dirs(file.path(private$.root, prefix), full.names = FALSE, recursive = TRUE)[-1L] # exclude prefix itself
       # FIXME: Test that the keys are indeed nodes, i.e. have a file 'zarr.json'.
-      paste0('/', keys)
+      if (length(keys)) paste0('/', keys) else character(0)
     },
 
     #' @description Retrieve all chunk (and shard) keys stored for the array
     #'   at the given prefix. Used internally to support resizing and
     #'   promoting arrays.
     #' @param prefix The prefix of the array whose chunk keys to retrieve.
-    #' @return A character vector of full store keys for chunk/shard files,
-    #'   excluding the array's own metadata document.
+    #' @return A character vector of full store keys under `prefix`. This
+    #'   may include keys that are not chunks, such as the metadata document
+    #'   of the array; the chunking scheme of the array selects the chunk
+    #'   keys.
     list_chunks = function(prefix) {
       base <- file.path(private$.root, prefix)
       if (!dir.exists(base)) return(character(0L))
@@ -216,6 +227,8 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     #' @param value The value to set, a complete chunk of data, a `raw` vector.
     #' @return Self, invisibly, or an error.
     set = function(key, value) {
+      if (private$.read_only)
+        stop('Cannot write to a read-only Zarr store', call. = FALSE)
       fp <- file.path(private$.root, key)
       dir <- dirname(fp)
       if (!dir.exists(dir))
@@ -237,6 +250,8 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     #' @param value The value to set, a complete chunk of data.
     #' @return Self, invisibly, or an error.
     set_if_not_exists = function(key, value) {
+      if (private$.read_only)
+        stop('Cannot write to a read-only Zarr store', call. = FALSE)
       fp <- file.path(private$.root, key)
       if (!file.exists(fp)) {
         dir <- dirname(fp)
@@ -274,7 +289,7 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
       } else {
         start <- byte_range[1L]
         if (start > sz)
-          stop('Byte-range of request is invalid.', call. = FALSE) # nocov
+          stop('Byte-range of request is invalid', call. = FALSE) # nocov
         if (length(byte_range) == 1L) {
           if (start >= 0L) {
             # Read to the end
@@ -289,7 +304,7 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
         }
       }
       if (n < 1L)
-        stop('Byte-range of request is invalid.', call. = FALSE) # nocov
+        stop('Byte-range of request is invalid', call. = FALSE) # nocov
 
       f <- file(f, 'rb')
       on.exit(close(f))
@@ -343,13 +358,21 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     #' of [array_builder].
     #' @return Self, invisible
     set_metadata = function(prefix, metadata) {
+      if (private$.read_only)
+        stop('Cannot write to a read-only Zarr store', call. = FALSE)
       fn <- file.path(private$.root, paste0(prefix, 'zarr.json'))
       if (inherits(metadata, 'array_builder'))
         metadata <- metadata$metadata()
       if (private$.version == 2L)
         metadata <- private$metadata_v3_to_v2(metadata)
       metadata <- private$check_cke(metadata)
-      jsonlite::write_json(metadata, fn, pretty = TRUE, auto_unbox = TRUE)
+      if (metadata$node_type == 'array') {
+        metadata$shape <- I(metadata$shape)
+        metadata$chunk_grid$configuration$chunk_shape <- I(metadata$chunk_grid$configuration$chunk_shape)
+        if (!is.null(metadata$dimension_names))
+          metadata$dimension_names <- I(metadata$dimension_names)
+      }
+      jsonlite::write_json(metadata, fn, pretty = TRUE, auto_unbox = TRUE, digits = NA)
       invisible(self)
     },
 
@@ -364,35 +387,35 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     },
 
     #' @description Create a new group in the store under the specified path.
-    #' @param path The path to the parent group of the new group. Ignored when
+    #' @param parent The path to the parent group of the new group. Ignored when
     #'   creating a root group.
     #' @param name The name of the new group. This may be an empty string `""`
     #'   to create a root group. It is an error to supply an empty string if a
     #'   root group or array already exists.
     #' @return A list with the metadata of the group, or an error if the group
     #'   could not be created.
-    create_group = function(path, name) {
+    create_group = function(parent, name) {
       if (private$.read_only)
-        stop('Cannot write new objects to the Zarr store.', call. = FALSE) # nocov
+        stop('Cannot write new objects to the Zarr store', call. = FALSE) # nocov
 
       if (!nzchar(name)) {
         # Create a root group
         fn <- file.path(private$.root, 'zarr.json')
         if (file.exists(fn))
-          stop('Cannot create a root group in an existing Zarr store.', call. = FALSE) # nocov
+          stop('Cannot create a root group in an existing Zarr store', call. = FALSE) # nocov
         meta <- list(zarr_format = 3, node_type = 'group')
-        jsonlite::write_json(meta, path = fn, auto_unbox = TRUE, pretty = T)
+        jsonlite::write_json(meta, path = fn, auto_unbox = TRUE, pretty = T, digits = NA)
         return(meta)
       }
 
-      if (!self$is_group(path))
-        stop('Path does not point to a Zarr group: ', path, call. = FALSE) # nocov
+      if (!self$is_group(parent))
+        stop('Path does not point to a Zarr group: ', parent, call. = FALSE) # nocov
 
       # Create the sub-group
-      fp <- file.path(private$.root, path, name)
+      fp <- file.path(private$.root, parent, name)
       if (dir.create(fp, showWarnings = FALSE, recursive = FALSE, mode = '0771')) {
         meta <- list(zarr_format = 3, node_type = 'group')
-        jsonlite::write_json(meta, path = file.path(fp, 'zarr.json'), auto_unbox = TRUE, pretty = T)
+        jsonlite::write_json(meta, path = file.path(fp, 'zarr.json'), auto_unbox = TRUE, pretty = T, digits = NA)
         meta
       } else
         stop('Could not create a group at path: ', fp, call. = FALSE) # nocov
@@ -414,16 +437,22 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
     #'   could not be created.
     create_array = function(parent, name, metadata) {
       if (private$.read_only)
-        stop('Cannot write new objects to the Zarr store.', call. = FALSE) # nocov
+        stop('Cannot write new objects to the Zarr store', call. = FALSE) # nocov
 
       metadata <- private$check_cke(metadata)
+      if (metadata$node_type == 'array') {
+        metadata$shape <- I(metadata$shape)
+        metadata$chunk_grid$configuration$chunk_shape <- I(metadata$chunk_grid$configuration$chunk_shape)
+        if (!is.null(metadata$dimension_names))
+          metadata$dimension_names <- I(metadata$dimension_names)
+      }
 
       if (!nzchar(name)) {
         # Create a root array
         fn <- file.path(private$.root, 'zarr.json')
         if (file.exists(fn))
-          stop('Cannot create a root array in an existing Zarr store.', call. = FALSE) # nocov
-        jsonlite::write_json(metadata, path = fn, auto_unbox = TRUE, pretty = T)
+          stop('Cannot create a root array in an existing Zarr store', call. = FALSE) # nocov
+        jsonlite::write_json(metadata, path = fn, auto_unbox = TRUE, pretty = T, digits = NA)
         return(metadata)
       }
 
@@ -433,7 +462,7 @@ zarr_localstore <- R6::R6Class('zarr_localstore',
       # Create the array
       fp <- file.path(paste0(private$.root, parent), name)
       if (dir.create(fp, showWarnings = FALSE, recursive = FALSE, mode = '0771')) {
-        jsonlite::write_json(metadata, path = file.path(fp, 'zarr.json'), auto_unbox = TRUE, pretty = T)
+        jsonlite::write_json(metadata, path = file.path(fp, 'zarr.json'), auto_unbox = TRUE, pretty = T, digits = NA)
         metadata
       } else
         stop('Could not create an array at path: ', fp, call. = FALSE) # nocov

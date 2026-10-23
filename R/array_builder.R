@@ -113,7 +113,7 @@ array_builder <- R6::R6Class('array_builder',
             stop('Metadata document is not for a Zarr version 3 object', call. = FALSE) # nocov
           self$format <- meta$zarr_format
           if (meta$node_type != 'array')
-            stop('Metadata document is not for a Zarr array.', call. = FALSE) # nocov
+            stop('Metadata document is not for a Zarr array', call. = FALSE) # nocov
 
           # Set properties through the active fields, checking is done there
           self$shape <- meta$shape
@@ -134,9 +134,18 @@ array_builder <- R6::R6Class('array_builder',
 
     #' @description Print the array metadata to the console.
     print = function() {
-      cat('<Zarr array metadata>', if (self$is_valid()) 'VALID' else 'INCOMPLETE', '\n')
       meta <- private$build_metadata()
-      cat(jsonlite::toJSON(meta, auto_unbox = TRUE, pretty = TRUE))
+      json_meta <- jsonlite::toJSON(meta, auto_unbox = TRUE, pretty = TRUE, digits = NA)
+
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+        cli::cli_h1('Zarr array metadata - {if (self$is_valid()) "VALID" else "INCOMPLETE"}')
+        cli::cli_code(json_meta, language = 'json')
+        cli::cli_end(this_div)
+      } else {
+        cat('<Zarr array metadata>', if (self$is_valid()) 'VALID' else 'INCOMPLETE', '\n')
+        cat(json_meta)
+      }
       invisible(self)
     },
 
@@ -148,9 +157,9 @@ array_builder <- R6::R6Class('array_builder',
       if (format == 'list')
         private$build_metadata()
       else if (format == 'json')
-        jsonlite::toJSON(private$build_metadata(), auto_unbox = TRUE, pretty = TRUE)
+        jsonlite::toJSON(private$build_metadata(), auto_unbox = TRUE, pretty = TRUE, digits = NA)
       else
-        stop('Bad format for Zarr metadata.', call. = FALSE) # nocov
+        stop('Bad format for Zarr metadata', call. = FALSE) # nocov
     },
 
     #' @description Adds a codec at the end of the currently registered codecs.
@@ -177,7 +186,8 @@ array_builder <- R6::R6Class('array_builder',
 
       cdc <- switch(codec,
         'transpose'        = zarr_codec_transpose$new(length(private$.shape), configuration),
-        'bytes'            = zarr_codec_bytes$new(private$.data_type, private$.chunk_shape$chunk_shape, configuration),
+        'bytes'            = zarr_codec_bytes$new(.encoded_data_type(private$.codecs, private$.data_type),
+                                                  private$.chunk_shape$chunk_shape, configuration),
         'vlen-utf8'        = zarr_codec_vlenutf8$new(),
         'ucs-4'            = zarr_codec_ucs4$new(private$.chunk_shape$chunk_shape, configuration),
         'blosc'            = zarr_codec_blosc$new(data_type = private$.data_type, configuration),
@@ -203,7 +213,7 @@ array_builder <- R6::R6Class('array_builder',
 
           zarr_codec_sharding$new(configuration)
         },
-        stop(paste('Unknown codec:', codec), call. = FALSE)
+        .zarr_filter(codec, configuration) # Zarr v.2 filters, or error
       )
       if (!inherits(cdc, 'zarr_codec'))
         stop('Could not create a codec from the arguments:', codec, call. = FALSE) # nocov
@@ -221,7 +231,7 @@ array_builder <- R6::R6Class('array_builder',
         if (cdc$from == 'array' && private$.codecs[[1L]]$from == cdc$to)
           private$.codecs <- c(setNames(list(cdc), cdc$name), private$.codecs)
         else
-          stop('First codec must use an "array" mode for input and agree with the following codec', call. = FALSE) # nocov
+          stop('First codec must use an "array" mode for input and agree with the following codec', call. = FALSE)
       } else if (cdc$from == private$.codecs[[len - 1L]]$to && cdc$to == private$.codecs[[len]]$from)
         private$.codecs <- append(private$.codecs, setNames(list(cdc), cdc$name), after = len - 1L)
       else
@@ -244,7 +254,7 @@ array_builder <- R6::R6Class('array_builder',
           if (froms[1L] == 'array' && tos[len] == 'bytes' && all(froms[-1L] == tos[-len]))
             private$.codecs <- tst
           else
-            stop('Cannot remove codec as it will invalidate the codec list.', call. = FALSE) # nocov
+            stop('Cannot remove codec as it will invalidate the codec list', call. = FALSE) # nocov
         } else
           private$.codecs <- list()
       }
@@ -288,7 +298,7 @@ array_builder <- R6::R6Class('array_builder',
         private$.portable <- value
         private$update_codecs()
       } else
-        stop('The portable property must be set with a single logical value.', call. = FALSE) # nocov
+        stop('The portable property must be set with a single logical value', call. = FALSE) # nocov
     },
 
     #' @field data_type The data type of the Zarr array. After changing the
@@ -305,6 +315,33 @@ array_builder <- R6::R6Class('array_builder',
       }
     },
 
+    #' @field data_type_from_storage.mode Set the data type of the Zarr array
+    #'   from the `storage.mode()` of the data to be written to the array with
+    #'   this `array_builder` instance. This is effectively a write-only field:
+    #'   reading the value will just return the Zarr data type, not the R type -
+    #'   use `zarr_v3_datatypes[[<zarr_data_type>]]$Rtype` for that. After
+    #'   setting the format, many fields will have been reset to a default
+    #'   value.
+    data_type_from_storage.mode = function(value) {
+      if (missing(value))
+        private$.data_type
+      else {
+        dt <- switch(value,
+                     'logical'   = 'bool',
+                     'integer'   = 'int32',
+                     'double'    = 'float64',
+                     'character' = 'string',
+                     stop('Unsupported data type:', value, call. = FALSE))
+        if (is.null(private$.data_type)) {
+          private$.data_type <- zarr_data_type$new(dt)
+          private$update_codecs()
+        } else if (private$.data_type$data_type != dt) {
+          private$.data_type$data_type <- dt
+          private$update_codecs()
+        }
+      }
+    },
+
     #' @field fill_value The value in the array of uninitialized data elements.
     #' The `fill_value` has to agree with the `data_type` of the array.
     fill_value = function(value) {
@@ -313,15 +350,23 @@ array_builder <- R6::R6Class('array_builder',
           private$.data_type$fill_value
         else {
           dt <- private$.data_type$data_type
-          private$.data_type$fill_value <- if (is.na(value))
+          if (is.null(value)) # JSON null: no fill value, e.g. Zarr v.2 or a string array
+            value <- switch(private$.data_type$Rtype,
+                            integer   = NA_integer_,
+                            integer64 = bit64::NA_integer64_,
+                            double    = NA_real_,
+                            character = NA_character_,
+                            NA)
+          private$.data_type$fill_value <- if (is.na(value) || inherits(value, 'integer64'))
             value
           else if (is.numeric(value)) {
             if (dt == 'string')
               stop('Invalid `fill_value`', call. = FALSE)
             switch(dt,
               'int32' = if (value < -.Machine$integer.max || value > .Machine$integer.max) NA_integer_ else as.integer(value),
-              'int64' = ,
-              'uint32' = if (value < -.Machine$integer.max || value > .Machine$integer.max) bit64::NA_integer64_ else bit64::as.integer64(value),
+              # JSON parses INT64_MAX to the double 2^63, just out of range
+              'int64' = if (value >= 2^63) bit64::as.integer64('9223372036854775807') else bit64::as.integer64(value),
+              'uint32' = if (value < 0 || value > 4294967295) bit64::NA_integer64_ else bit64::as.integer64(value),
               'int8' = ,
               'int16' = ,
               'uint8' = ,
@@ -361,7 +406,7 @@ array_builder <- R6::R6Class('array_builder',
           private$.shape <- value
           private$.chunk_shape <- chunk_grid_regular$new(value) # Automatic chunk shape
         } else
-          stop('Shape must be an integer vector of lengths along each dimension of the Zarr array.', call. = FALSE) # nocov
+          stop('Shape must be an integer vector of lengths along each dimension of the Zarr array', call. = FALSE) # nocov
         private$update_codecs()
       }
     },
@@ -370,7 +415,8 @@ array_builder <- R6::R6Class('array_builder',
     #'   the Zarr array. When setting, pass in an integer vector of lengths of
     #'   the same size as the shape of the array. The `shape` of the array must
     #'   be set before setting this. When reading, returns an instance of class
-    #'   [chunk_grid_regular].
+    #'   [chunk_grid_regular] if the `shape` field has been set, `NULL`
+    #'   otherwise.
     chunk_shape = function(value) {
       if (missing(value))
         private$.chunk_shape
@@ -385,7 +431,7 @@ array_builder <- R6::R6Class('array_builder',
     codec_info = function(value) {
       if (missing(value)) {
         if (length(private$.codecs))
-          do.call(rbind, lapply(private$.codecs, function(cod) data.frame(mode = cod$mode(), codec = cod$name)))
+          do.call(rbind, lapply(private$.codecs, function(cod) data.frame(mode = cod$mode, codec = cod$name)))
       }
     },
 

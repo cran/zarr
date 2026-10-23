@@ -1,29 +1,24 @@
 #' Chunk management
 #'
 #' @description This class implements the regular chunk grid for Zarr
-#'   arrays. It manages reading from and writing to Zarr stores, using the
-#'   codecs for data transformation.
+#'   arrays, in which all chunks have the same shape. Chunks along the high
+#'   end of a dimension extend beyond the array when the array shape is not a
+#'   multiple of the chunk shape. It manages reading from and writing to Zarr
+#'   stores, using the codecs for data transformation.
 #' @docType class
 chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
   inherit = chunking,
   cloneable = FALSE,
   private = list(
-    # The underlying properties of the array
-    .codecs = list(),
+    .chunk_shape    = NULL,  # Shape of every chunk in the grid
+    .codecs         = list(),
+    .clip_supported = TRUE,  # Can a chunk be clipped on resize?
 
-    # Set the codecs of this chunk manager
-    set_codecs = function(codecs) {
-      private$.codecs <- codecs
-
-      transp <- codecs$transpose
-      if (is.null(transp))  # C order
-        rev(seq_along(private$.chunk_shape))
-      else if (all(diff(transp$configuration$order) == -1))
-        NULL
-      else
-        ab$shape[transp$configuration$order]
+    max_chunk_length = function() {
+      prod(private$.chunk_shape)
     },
 
+    # NA the excess tail of a chunk left partly outside the new shape.
     clip_chunk = function(cidx, new_shape, clip_dims) {
       chunk_shape  <- private$.chunk_shape
       chunk_origin <- cidx * chunk_shape + 1L
@@ -51,19 +46,38 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
     #'   Ignored for a scalar array.
     #' @return An instance of `chunk_grid_regular`.
     initialize = function(array_shape, chunk_shape) {
-      if (!is.na(array_shape[1L]) && missing(chunk_shape))
-        chunk_shape <- .auto_chunk(array_shape)
-      super$initialize('regular', array_shape, chunk_shape)
+      super$initialize('regular', array_shape)
+
+      if (private$.scalar)
+        private$.chunk_shape <- 1L
+      else {
+        if (missing(chunk_shape))
+          chunk_shape <- auto_chunk(array_shape)
+        if (is.integer(chunk_shape) && all(chunk_shape > 0L) && length(array_shape) == length(chunk_shape)) {
+          private$.chunk_shape <- chunk_shape
+          private$.grid <- (array_shape - 1L) %/% chunk_shape + 1L
+        } else
+          stop('Chunk shape is not valid for `array_shape`', call. = FALSE) # nocov
+      }
     },
 
     #' @description Print a short description of this chunking scheme to the
     #'   console.
     #' @return Self, invisibly.
     print = function() {
-      if (private$.scalar)
-        cat('<Zarr regular chunk grid> []\n', sep = '')
-      else
-        cat('<Zarr regular chunk grid> [', paste(private$.chunk_shape, collapse = ', '), ']\n', sep = '')
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+        cli::cli_h1('Zarr regular chunk grid')
+        if (length(private$.grid))
+          cli::cli_alert_info('{.label Chunk grid:} {.text {paste(private$.grid, collapse = ", ")}}')
+        cli::cli_alert_info('{.label Chunk size:} {.text {paste(private$.chunk_shape, collapse = ", ")}}')
+        cli::cli_end(this_div)
+      } else {
+        cat('<Zarr regular chunk grid>\n')
+        if (!private$.scalar)
+          cat('  Chunk grid: [', paste(private$.grid, collapse = ', '), ']\n', sep = '')
+        cat('  Chunk size: [', paste(private$.chunk_shape, collapse = ', '), ']\n', sep = '')
+      }
       invisible(self)
     },
 
@@ -74,6 +88,51 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
       list(chunk_grid = list(name = 'regular',
                              configuration = list(chunk_shape = if (private$.scalar) list()
                                                                 else private$.chunk_shape)))
+    },
+
+    #' @description Resize the array, growing or shrinking any combination of
+    #'   dimensions at either end in one pass. Chunks are renamed in the store
+    #'   when their grid index moves and erased when they fall outside the new
+    #'   grid. No chunk payload is re-encoded except for a chunk left straddling
+    #'   a shrinking, non-chunk-aligned high-end boundary, whose excess
+    #'   elements are set to the fill value.
+    #'
+    #'   Because chunks have a fixed position on the grid, `low` can only move
+    #'   in whole chunks: values are rounded outward to the nearest chunk (more
+    #'   space added when growing, less removed when shrinking). `high` is not
+    #'   constrained this way.
+    #' @details An error is thrown when the resize would produce a non-positive
+    #'   extent along any dimension, or when the array would shrink to a high
+    #'   boundary that is not aligned to the chunk boundary while the chunking
+    #'   scheme cannot clip chunks.
+    #' @param low,high Integer vectors, one element per array dimension.
+    #'   Positive grows that end, negative shrinks it, `0` leaves it unchanged.
+    #' @return Self, invisibly.
+    resize = function(low, high) {
+      chunk_shape <- private$.chunk_shape
+      shift <- as.integer(ifelse(low >= 0L, ceiling(low / chunk_shape), -floor(-low / chunk_shape)))
+      new_shape <- as.integer(private$.array_shape + shift * chunk_shape + high)
+      if (any(new_shape < 1L))
+        stop('Resizing would produce a non-positive extent along one or more dimensions', call. = FALSE)
+
+      new_grid  <- (new_shape - 1L) %/% chunk_shape + 1L
+      clip_dims <- which(high < 0L & (new_shape %% chunk_shape) != 0L)
+      if (length(clip_dims) && !private$.clip_supported)
+        stop('Shrinking this array to a shape that is not aligned to the ',
+             'chunk (shard) boundary is not supported for this chunk grid',
+             call. = FALSE)
+
+      kept <- private$relocate_chunks(shift, new_grid)
+
+      if (length(clip_dims) && nrow(kept)) {
+        on_boundary <- Reduce(`|`, lapply(clip_dims, function(d) kept[, d] == new_grid[d] - 1L))
+        for (i in which(on_boundary))
+          private$clip_chunk(kept[i, ], new_shape, clip_dims)
+      }
+
+      private$.array_shape <- new_shape
+      private$.grid        <- new_grid
+      invisible(self)
     },
 
     #' @description Read data from the Zarr array into an R object. The read can
@@ -284,6 +343,13 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
     }
   ),
   active = list(
+    #' @field chunk_shape (read-only) The dimensions of each chunk in the chunk
+    #' grid of the associated array.
+    chunk_shape = function(value) {
+      if (missing(value))
+        private$.chunk_shape
+    },
+
     #' @field codecs The list of codecs used by the chunking scheme. These are
     #' set by the array when starting to use chunking for file I/O. Upon
     #' reading, the list of registered codecs.
@@ -291,9 +357,9 @@ chunk_grid_regular <- R6::R6Class('chunk_grid_regular',
       if (missing(value))
         private$.codecs
       else if (is.list(value) && all(sapply(value, inherits, 'zarr_codec')))
-        private$set_codecs(value)
+        private$.codecs <- value
       else
-        stop('Invalid list of codecs for chunk management.', call. = FALSE) # nocov
+        stop('Invalid list of codecs for chunk management', call. = FALSE) # nocov
     }
   )
 )
@@ -320,6 +386,7 @@ chunk_grid_regular_IO <- R6::R6Class('chunk_grid_regular_IO',
     .codecs = list(),
     .chunk_key = '',
     .chunk_shape = NULL,
+    .perm = NULL,   # Permutation to the serialised element order, see .chunk_permutation()
 
     # Load the chunk and decode it. Result is placed in private$.buffer.
     load_chunk = function() {
@@ -328,19 +395,18 @@ chunk_grid_regular_IO <- R6::R6Class('chunk_grid_regular_IO',
         private$.buffer <- if (is.null(buf)) {
           # No chunk in the store, initialize buffer with fill_data
           array(rep(private$.data_type$fill_value, prod(private$.chunk_shape)), private$.chunk_shape)
-        } else {
-          # Decode the chunk
-          for (i in length(private$.codecs):1L)
-            buf <- private$.codecs[[i]]$decode(buf)
-
-          # If there is no transpose codec (always the first one) then the
-          # chunk is in canonical C order so flip the dimensions and permute.
-          if (private$.codecs[[1L]]$name != 'transpose') {
-            dim(buf) <- rev(private$.chunk_shape)
-            aperm(buf, rev(seq_along(private$.chunk_shape)))
-          } else buf
-        }
+        } else
+          .decode_chunk(buf, private$.codecs, private$.perm, private$.chunk_shape)
+        # array() drops the class, but not the bits, of integer64
+        if (private$.data_type$Rtype == 'integer64')
+          class(private$.buffer) <- 'integer64'
       }
+    },
+
+    # Does the buffer hold only the fill value? Such a chunk is equivalent to an
+    # absent chunk. NA and NaN fill values never compare equal, hence is.na().
+    is_fill = function() {
+      all_fill_impl(private$.buffer, private$.data_type$fill_value)
     },
 
     # Make sure that any edits are written to the store before disappearing.
@@ -362,6 +428,7 @@ chunk_grid_regular_IO <- R6::R6Class('chunk_grid_regular_IO',
       private$.data_type <- dtype
       private$.store <- store
       private$.codecs <- lapply(codecs, function(c) c$copy())
+      private$.perm <- .chunk_permutation(codecs, length(chunk_shape))
     },
 
     #' @description Read some data from the chunk.
@@ -415,14 +482,11 @@ chunk_grid_regular_IO <- R6::R6Class('chunk_grid_regular_IO',
     #' @return Self, invisibly.
     flush = function() {
       if (private$.buffer_stale) {
-        if (all(is.na(private$.buffer))) {
-          # If the entire buffer is NA, don't write it, delete existing chunk
+        if (private$is_fill()) {
+          # If the entire buffer is fill values, don't write it, delete existing chunk
           private$.store$erase(private$.chunk_key)
         } else {
-          # Encode the buffer
-          buf <- private$.buffer
-          for (i in seq_len(length(private$.codecs)))
-            buf <- private$.codecs[[i]]$encode(buf)
+          buf <- .encode_chunk(private$.buffer, private$.codecs, private$.perm)
 
           # Write to the store
           private$.store$set(private$.chunk_key, buf)

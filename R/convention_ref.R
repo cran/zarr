@@ -8,8 +8,8 @@
 #'
 #' ```{r schema, eval = FALSE}
 #' {
-#'  "schema_url": "https://raw.githubusercontent.com/R-CF/zarr_convention_ref/main/schema.json",
-#'  "spec_url": "https://raw.githubusercontent.com/R-CF/zarr_convention_ref/main/README.md",
+#'  "schema_url": "https://raw.githubusercontent.com/R-CF/zarr_convention_ref/refs/tags/v2.0.0/schema.json",
+#'  "spec_url": "https://github.com/R-CF/zarr_convention_ref/blob/v2.0.0/README.md",
 #'  "uuid": "d89b30cf-ed8c-43d5-9a16-b492f0cd8786",
 #'  "name": "ref",
 #'  "description": "Referencing Zarr objects external to the current Zarr object"
@@ -63,9 +63,9 @@ zarr_convention_ref <- R6::R6Class('zarr_convention_ref',
     #' @return A new instance of a "ref" convention agent.
     initialize = function() {
       super$initialize(name   = 'ref',
-                       schema = 'https://raw.githubusercontent.com/R-CF/zarr_convention_ref/main/schema.json',
+                       schema = 'https://raw.githubusercontent.com/R-CF/zarr_convention_ref/refs/tags/v2.0.0/schema.json',
                        uuid   = 'd89b30cf-ed8c-43d5-9a16-b492f0cd8786')
-      private$.spec <- 'https://raw.githubusercontent.com/R-CF/zarr_convention_ref/main/README.md'
+      private$.spec <- 'https://github.com/R-CF/zarr_convention_ref/blob/v2.0.0/README.md'
       private$.description <- 'Referencing Zarr objects external to the current Zarr object'
     },
 
@@ -92,10 +92,8 @@ zarr_convention_ref <- R6::R6Class('zarr_convention_ref',
       }
 
       if (!(missing(attribute) || is.null(attribute))) {
-        if (private$parse_json_pointer(attribute))
-          private$.attribute <- attribute
-        else
-          stop('`attribute` field must be a character string with a valid JSON pointer', call. = FALSE)
+        private$parse_json_pointer(attribute) # Errors on an invalid pointer
+        private$.attribute <- attribute
       }
     },
 
@@ -111,13 +109,13 @@ zarr_convention_ref <- R6::R6Class('zarr_convention_ref',
     #'   attributes of a Zarr object.
     #' @return A `list` with Zarr attributes for a group or array.
     as_list = function() {
-      if (!nzchar(private$.node))
+      if (is.null(private$.node))
         stop('`node` field must be set', call. = FALSE)
 
       out <- if (!is.null(private$.uri) && nzchar(private$.uri)) list(uri = private$.uri) else list()
       out <- c(out, list(node = private$.node))
       if (!is.null(private$.attribute) && nzchar(private$.attribute))
-        out$attribute <- c(out, list(attribute = private$.attribute))
+        out$attribute <- private$.attribute
       out
     }
   )

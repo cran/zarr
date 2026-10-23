@@ -48,6 +48,7 @@ keys that represents.}
 \subsection{Public methods}{
   \itemize{
     \item \href{#method-zarr_localstore-initialize}{\code{zarr_localstore$new()}}
+    \item \href{#method-zarr_localstore-brief}{\code{zarr_localstore$brief()}}
     \item \href{#method-zarr_localstore-exists}{\code{zarr_localstore$exists()}}
     \item \href{#method-zarr_localstore-clear}{\code{zarr_localstore$clear()}}
     \item \href{#method-zarr_localstore-erase}{\code{zarr_localstore$erase()}}
@@ -67,12 +68,14 @@ keys that represents.}
     \item \href{#method-zarr_localstore-create_array}{\code{zarr_localstore$create_array()}}
   }
 }
-\if{html}{\out{<details open><summary>Inherited methods</summary>
+\if{html}{\out{<details><summary>Inherited methods</summary>
 <ul>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="get_many"><a href='../../zarr/html/zarr_store.html#method-zarr_store-get_many'><code>zarr_store$get_many()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="getsize"><a href='../../zarr/html/zarr_store.html#method-zarr_store-getsize'><code>zarr_store$getsize()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="getsize_prefix"><a href='../../zarr/html/zarr_store.html#method-zarr_store-getsize_prefix'><code>zarr_store$getsize_prefix()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="is_empty"><a href='../../zarr/html/zarr_store.html#method-zarr_store-is_empty'><code>zarr_store$is_empty()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="list"><a href='../../zarr/html/zarr_store.html#method-zarr_store-list'><code>zarr_store$list()</code></a></span></li>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="print"><a href='../../zarr/html/zarr_store.html#method-zarr_store-print'><code>zarr_store$print()</code></a></span></li>
 </ul>
 </details>}}
 \if{html}{\out{<hr>}}
@@ -116,6 +119,19 @@ Default \code{FALSE}.}
 }
 
 \if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_localstore-brief"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_localstore-brief}{}}}
+\subsection{\code{zarr_localstore$brief()}}{
+  Print a brief summary of the local file system store to the
+console. This will use \code{cli} if available.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_localstore$brief()}
+    \if{html}{\out{</div>}}
+  }
+}
+
+\if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-zarr_localstore-exists"></a>}}
 \if{latex}{\out{\hypertarget{method-zarr_localstore-exists}{}}}
 \subsection{\code{zarr_localstore$exists()}}{
@@ -143,9 +159,8 @@ group, an array, or a chunk.
 \if{latex}{\out{\hypertarget{method-zarr_localstore-clear}{}}}
 \subsection{\code{zarr_localstore$clear()}}{
   Clear the store. Remove all keys and values from the store.
-Invoking this method deletes affected files on the file system and this
-action can not be undone. The only file that will remain is "zarr.json"
-or ".zgroup" (version 2) in the root of this store.
+WARNING: Invoking this method deletes affected files on the file system
+and this action can not be undone.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
     \preformatted{zarr_localstore$clear()}
@@ -276,8 +291,10 @@ promoting arrays.
     \if{html}{\out{</div>}}
   }
   \subsection{Returns}{
-    A character vector of full store keys for chunk/shard files,
-excluding the array's own metadata document.
+    A character vector of full store keys under \code{prefix}. This
+may include keys that are not chunks, such as the metadata document
+of the array; the chunking scheme of the array selects the chunk
+keys.
   }
 }
 
@@ -497,13 +514,13 @@ of \link{array_builder}.}
   Create a new group in the store under the specified path.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
-    \preformatted{zarr_localstore$create_group(path, name)}
+    \preformatted{zarr_localstore$create_group(parent, name)}
     \if{html}{\out{</div>}}
   }
   \subsection{Arguments}{
     \if{html}{\out{<div class="arguments">}}
     \describe{
-      \item{\code{path}}{The path to the parent group of the new group. Ignored when
+      \item{\code{parent}}{The path to the parent group of the new group. Ignored when
 creating a root group.}
       \item{\code{name}}{The name of the new group. This may be an empty string \code{""}
 to create a root group. It is an error to supply an empty string if a

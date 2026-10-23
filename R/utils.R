@@ -1,6 +1,8 @@
 #' Zarr package options
 #'
-#' Use this function to read or modify package options.
+#' Use this function to read or modify package options. On modifying an option,
+#' if the new value is not valid then it is silently discarded and the original
+#' setting remains.
 #'
 #' @param key Character. A key whose value to retrieve or modify. If missing,
 #'   all options are returned.
@@ -17,12 +19,31 @@ zarr_options <- function(key, value) {
     Zarr.options[[key]]
   else {
     switch(key,
-           'chunk_length'      = if (is.numeric(value)) Zarr.options$chunk_length <- as.integer(value[1L]),
-           'chunk_cache_bytes' = if (is.numeric(value)) Zarr.options$chunk_cache_bytes <- as.numeric(value[1L]),
-           'min_compress'      = if (is.numeric(value)) Zarr.options$min_compress <- as.integer(value[1L]),
-           'eps'               = if (is.numeric(value)) Zarr.options$eps <- value[1L]
+           'chunk_length'      = if (is.numeric(value) && value[1L] > 0) Zarr.options$chunk_length <- as.integer(value[1L]),
+           'chunk_cache_bytes' = if (is.numeric(value) && value[1L] > 0) Zarr.options$chunk_cache_bytes <- as.numeric(value[1L]),
+           'min_compress'      = if (is.numeric(value) && value[1L] > 0) Zarr.options$min_compress <- as.integer(value[1L]),
+           'eps'               = if (is.numeric(value) && value[1L] > 0) Zarr.options$eps <- value[1L],
+           'group_style'       = if (is.character(value)) Zarr.options$group_style <- value,
+           'array_style'       = if (is.character(value)) Zarr.options$array_style <- value,
+           'label_style'       = if (is.character(value)) Zarr.options$label_style <- value,
+           'text_style'        = if (is.character(value)) Zarr.options$array_style <- value,
+           'minor_style'       = if (is.character(value)) Zarr.options$minor_style <- value
     )
+    if (requireNamespace('cli', quietly = TRUE))
+      Zarr.options$zarr_theme <- .make_zarr_theme()
   }
+}
+
+# Internal function to make a Zarr theme for use with cli after any style has
+# changed. Return a named list with ANSI styles that can be assigned to
+# Zarr.options$zarr_theme
+.make_zarr_theme <- function() {
+  list('h1' = list('margin-top' = 0),
+       'span.group' = list(fmt = do.call(cli::combine_ansi_styles, as.list(Zarr.options$group_style))),
+       'span.array' = list(fmt = do.call(cli::combine_ansi_styles, as.list(Zarr.options$array_style))),
+       'span.label' = list(fmt = do.call(cli::combine_ansi_styles, as.list(Zarr.options$label_style))),
+       'span.text' = list(fmt = do.call(cli::combine_ansi_styles, as.list(Zarr.options$text_style))),
+       'span.minor' = list(fmt = do.call(cli::combine_ansi_styles, as.list(Zarr.options$minor_style))))
 }
 
 #' Check if the name of a node is valid in Zarr
@@ -89,7 +110,7 @@ is_valid_node_name <- function(name) {
           gsub(pattern = ":\\s*NaN",  replacement = ': "NaN"',       x = _) |>
           jsonlite::fromJSON(simplifyDataFrame = FALSE)
       } else {
-        stop(e)
+        stop(e) # nocov
       }
     }
   )
@@ -135,7 +156,7 @@ is_valid_node_name <- function(name) {
 #' Test if vectors `x` and `y` have near-identical values.
 #' @noRd
 .near <- function(x, y) {
-  abs(x - y) <= max(Zarr.options$eps * max(abs(x), abs(y)), 1e-12)
+  abs(x - y) <= pmax(Zarr.options$eps * pmax(abs(x), abs(y)), 1e-12)
 }
 
 #' Determines the protocol to be used with a specified store location.
@@ -172,7 +193,7 @@ is_valid_node_name <- function(name) {
 
   m <- regmatches(loc, regexec('^(https?)://([^/]+)/?(.*)$', loc, perl = TRUE))[[1L]]
   if (length(m) != 4L)
-    stop('Cannot parse S3 location: ', loc, call. = FALSE)
+    stop('Cannot parse S3 location: ', loc, call. = FALSE) # nocov
   scheme <- m[2L]; host <- m[3L]; path <- m[4L]
 
   if (grepl('^s3[.-]?[a-z0-9-]*\\.amazonaws\\.com$', host, ignore.case = TRUE, perl = TRUE)) {
@@ -196,17 +217,49 @@ is_valid_node_name <- function(name) {
   # is the first path segment, the endpoint is the scheme+host itself.
   parts <- strsplit(path, '/', fixed = TRUE)[[1L]]
   if (!length(parts) || !nzchar(parts[1L]))
-    stop('Cannot determine bucket from S3 location: ', loc, call. = FALSE)
+    stop('Cannot determine bucket from S3 location: ', loc, call. = FALSE) # nocov
   list(bucket = parts[1L],
        prefix = if (length(parts) > 1L) paste(parts[-1L], collapse = '/') else '',
        region = NULL, endpoint = paste0(scheme, '://', host))
 }
 
-#' Get optimal chunking for the dimension lengths in argument dims. This uses
-#' the Zarr.options$chunk_length setting or a user-defined maximum chunk length
-#' per dimension.
-#' @noRd
-.auto_chunk <- function(dims, max_chunk = Zarr.options$chunk_length) {
+# Fetch URLs concurrently with curl's multi interface. Returns a list of raw
+# vectors in the order of `urls`, NULL for a 404; any other status is an error.
+.fetch_urls <- function(urls, host_con = 6L) {
+  out  <- vector('list', length(urls))
+  pool <- curl::new_pool(host_con = host_con)
+  for (i in seq_along(urls)) local({
+    i <- i
+    curl::multi_add(curl::new_handle(url = urls[i]), pool = pool,
+                    done = function(res) {
+                      if (res$status_code == 200L) out[[i]] <<- res$content
+                      else if (res$status_code != 404L)
+                        stop('Error ', res$status_code, ' on ', urls[i], call. = FALSE)
+                    },
+                    fail = function(msg) stop(msg, ' on ', urls[i], call. = FALSE))
+  })
+  curl::multi_run(pool = pool)
+  out
+}
+
+#' Optimal chunking for an array
+#'
+#' This function computes the optimal dimension lengths of a single chunk from
+#' the array dimensions as given in argument `dims`. "Optimal" means that the
+#' provided solution is as close as possible to the `max_chunk` size.
+#'
+#' @param dims Integer array with the lengths along every dimension of the
+#'   array.
+#' @param max_chunk Optional. Integer giving the maximum number of elements per
+#'   chunk. Defaults to `Zarr.options$chunk_length`.
+#' @return An integer array with the same length as argument `dims` giving the
+#'   length of a chunk along each dimension of the array.
+#' @export
+#' @examples
+#' shape <- c(5000L, 43L, 12800L, 4L)
+#' auto_chunk(shape)
+#' auto_chunk(shape, 10000L)
+auto_chunk <- function(dims, max_chunk = Zarr.options$chunk_length) {
   nchunks <- ceiling(dims / max_chunk)
   as.integer(ceiling(dims / nchunks))
 }
@@ -252,21 +305,20 @@ zarr_conventions <- function() {
 #' @param metadata List, the metadata of the node to be created.
 #' @param parent A `zarr_node`, the parent of the node to be created. `NULL` for
 #'   the root node.
-#' @param store The `zarr_store` where the node is stored.
 #' @return The newly created node, either from a domain or a generic
 #'   `zarr_group` or `zarr_array`.
 #' @noRd
-.buildNode <- function(name, metadata, parent, store) {
+.buildNode <- function(name, metadata, parent) {
   for (d in zarr_domains()) {
-    node <- d$build(name, metadata, parent, store)
+    node <- d$build(name, metadata, parent)
     if (inherits(node, 'zarr_node')) return(node)
   }
 
   # Fallback: return generic node
   if (metadata$node_type == 'group')
-    zarr_group$new(name, metadata, parent, store)
+    zarr_group$new(name, metadata, parent, no_create_check = TRUE)
   else
-    zarr_array$new(name, metadata, parent, store)
+    zarr_array$new(name, metadata, parent, no_create_check = TRUE)
 }
 
 # This internal function supports codec management for sharding
@@ -285,4 +337,50 @@ zarr_conventions <- function() {
     codecs <- c(codecs, stats::setNames(list(cdc), cfg$name))
   }
   codecs
+}
+
+# Chunk element order. A Zarr chunk is serialised by its array->bytes codec in
+# C order, after any array->array (transpose) codec has been applied. In R, the
+# C-order serialisation of an array `y` is `as.vector(aperm(y, n:1))`, so the
+# transpose codec and the serialisation together amount to a single
+# permutation of an R-order chunk: `rev(order) + 1` with a transpose codec,
+# `n:1` without one. These helpers apply that permutation once, instead of
+# running the transpose codec and then permuting again for C order.
+
+# The permutation from an R-order chunk of rank `n` to its serialised order,
+# or `NULL` when the chunk is serialised in R order (the default transpose
+# order `n-1, ..., 0` that this package writes).
+.chunk_permutation <- function(codecs, n) {
+  transp <- Filter(function(cdc) cdc$name == 'transpose', codecs)
+  perm <- if (length(transp)) rev(transp[[1L]]$configuration$order) + 1L
+          else rev(seq_len(n))
+  if (identical(perm, seq_len(n))) NULL else perm
+}
+
+# aperm() keeps the bits but drops the class of integer64 data
+.aperm <- function(x, perm) {
+  out <- aperm(x, perm)
+  if (inherits(x, 'integer64')) class(out) <- 'integer64'
+  out
+}
+
+# Encode an R-order chunk `x` to raw bytes.
+.encode_chunk <- function(x, codecs, perm) {
+  if (!is.null(perm)) x <- .aperm(x, perm)
+  for (cdc in codecs)
+    if (cdc$name != 'transpose') x <- cdc$encode(x)
+  x
+}
+
+# Decode raw chunk bytes to an R-order array of `shape`.
+.decode_chunk <- function(raw, codecs, perm, shape) {
+  for (cdc in rev(codecs))
+    if (cdc$name != 'transpose') raw <- cdc$decode(raw)
+  if (is.null(perm)) {
+    dim(raw) <- shape
+    raw
+  } else {
+    dim(raw) <- shape[perm]
+    .aperm(raw, order(perm))
+  }
 }

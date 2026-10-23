@@ -40,10 +40,12 @@ applies to the array for all subsequent reads.}
   \itemize{
     \item \href{#method-zarr_array-initialize}{\code{zarr_array$new()}}
     \item \href{#method-zarr_array-print}{\code{zarr_array$print()}}
+    \item \href{#method-zarr_array-details}{\code{zarr_array$details()}}
     \item \href{#method-zarr_array-hierarchy_nodes}{\code{zarr_array$hierarchy_nodes()}}
     \item \href{#method-zarr_array-read}{\code{zarr_array$read()}}
     \item \href{#method-zarr_array-write}{\code{zarr_array$write()}}
     \item \href{#method-zarr_array-flush}{\code{zarr_array$flush()}}
+    \item \href{#method-zarr_array-copy_to}{\code{zarr_array$copy_to()}}
     \item \href{#method-zarr_array-resize}{\code{zarr_array$resize()}}
     \item \href{#method-zarr_array-promote}{\code{zarr_array$promote()}}
   }
@@ -66,22 +68,25 @@ applies to the array for all subsequent reads.}
 \if{html}{\out{<a id="method-zarr_array-initialize"></a>}}
 \if{latex}{\out{\hypertarget{method-zarr_array-initialize}{}}}
 \subsection{\code{zarr_array$new()}}{
-  Initialize a new array in a Zarr hierarchy. The array must
-already exist in the store.
+  Initialize a new array in a Zarr hierarchy. The array will
+be created in the store if it does not yet exist, opened otherwise.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
-    \preformatted{zarr_array$new(name, metadata, parent, store)}
+    \preformatted{zarr_array$new(name, metadata, parent, no_create_check = FALSE)}
     \if{html}{\out{</div>}}
   }
   \subsection{Arguments}{
     \if{html}{\out{<div class="arguments">}}
     \describe{
-      \item{\code{name}}{The name of the array.}
-      \item{\code{metadata}}{List with the metadata of the array.}
-      \item{\code{parent}}{The parent \code{zarr_group} instance of this new array, can be
-missing or \code{NULL} if the Zarr object should have just this array.}
-      \item{\code{store}}{The \link{zarr_store} instance to persist data in. Ignored if
-\code{parent} is specified.}
+      \item{\code{name}}{The name of the array. Ignored for a single-array store.}
+      \item{\code{metadata}}{List with the metadata of the array, or an instance of
+class \link{array_builder}.}
+      \item{\code{parent}}{The parent \link{zarr_group} instance of this new array, or the
+\link{zarr} object for a single-array store.}
+      \item{\code{no_create_check}}{Optional, logical flag to indicate if a check for
+existence of the group in the store should be made. Default is \code{FALSE}.
+Set to \code{TRUE} only when existence has been established before calling
+this method.}
     }
     \if{html}{\out{</div>}}
   }
@@ -103,12 +108,28 @@ missing or \code{NULL} if the Zarr object should have just this array.}
 }
 
 \if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_array-details"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_array-details}{}}}
+\subsection{\code{zarr_array$details()}}{
+  Produce a named character vector with a summary of the array
+including its name, data type, shape (with dimension names if
+available) and the chunking.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_array$details()}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    Named character vector with details of the array.
+  }
+}
+
+\if{html}{\out{<hr>}}
 \if{html}{\out{<a id="method-zarr_array-hierarchy_nodes"></a>}}
 \if{latex}{\out{\hypertarget{method-zarr_array-hierarchy_nodes}{}}}
 \subsection{\code{zarr_array$hierarchy_nodes()}}{
-  Prints the hierarchy of this array to a character string.
-Usually called from the Zarr object or a group to display the full
-group hierarchy.
+  Prints this array to a hierarchy. Usually called from the
+Zarr object or a group to display the full group hierarchy.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
     \preformatted{zarr_array$hierarchy_nodes(idx, total)}
@@ -117,7 +138,8 @@ group hierarchy.
   \subsection{Arguments}{
     \if{html}{\out{<div class="arguments">}}
     \describe{
-      \item{\code{idx, total}}{Arguments to control indentation.}
+      \item{\code{idx, total}}{Arguments to control indentation. Ignored if package
+\code{cli} is installed.}
     }
     \if{html}{\out{</div>}}
   }
@@ -129,7 +151,7 @@ group hierarchy.
 \subsection{\code{zarr_array$read()}}{
   Read some or all of the array data for the array. For all
 types other than logical, any data elements with the \code{fill_value} of
-the Zarr data type are set to \code{NA}.
+the Zarr data type are set to \code{NA} if the \code{raw_read} field is \code{TRUE}.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
     \preformatted{zarr_array$read(selection)}
@@ -181,6 +203,12 @@ persist data in stale chunks.}
     }
     \if{html}{\out{</div>}}
   }
+  \subsection{Details}{
+    An error is thrown when the selection extends beyond the
+shape of the array, including when \code{selection} is missing and
+\code{data} is larger than the array. Use \code{resize()} first to grow the
+array.
+  }
   \subsection{Returns}{
     Self, invisibly.
   }
@@ -196,6 +224,39 @@ store.
     \if{html}{\out{<div class="r">}}
     \preformatted{zarr_array$flush()}
     \if{html}{\out{</div>}}
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_array-copy_to"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_array-copy_to}{}}}
+\subsection{\code{zarr_array$copy_to()}}{
+  Copy this array to another store. The chunks of this array
+are copied as stored and without decoding, so the copy is
+byte-identical. For a sharded array, whole shards are copied.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_array$copy_to(dest, verbose)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{dest}}{The \code{zarr} or \code{zarr_group} instance to copy this array into.}
+      \item{\code{verbose}}{A \code{list} with details for providing feedback; empty if no
+feedback is requested.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Details}{
+    This is a method for internal use. It is called by the
+\link{zarr_group} \code{copy_to()} method, which itself is called by the \link{zarr}
+\code{save_to()} method.
+
+An error is raised if this array uses storage transformers.
+  }
+  \subsection{Returns}{
+    The object in argument \code{dest} with this array copied into it.
   }
 }
 

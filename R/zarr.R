@@ -22,43 +22,112 @@ zarr <- R6::R6Class("zarr",
     #' @description Create a new Zarr instance. The Zarr instance manages the
     #'   groups and arrays in the Zarr store that it refers to. This instance
     #'   provides access to all objects in the Zarr store.
-    #' @param store An instance of a [zarr_store] descendant class where the
-    #'   Zarr objects are located.
+    #'
+    #'   This method can open any Zarr store located on systems with a supported
+    #'   protocol ('local', 's3', 'http').
+    #'
+    #'   This method can also create a new Zarr store on a local file system or
+    #'   in memory. It is not possible to create a new store on S3 or an a web
+    #'   server. The newly created store is uninitialised, it is an empty
+    #'   directory. Either assign a [zarr_array] to the `root` field, or create
+    #'   a root [zarr_group] to make the store valid and usable.
+    #' @param store Optional. Either an instance of a [zarr_store] descendant
+    #'   class where the Zarr objects are located, or character string that
+    #'   indicates a location on a file system or a HTTP or S3 server where the
+    #'   Zarr store is to be found. The character string may contain UTF-8
+    #'   characters and/or use a file URI format. On a local file system the
+    #'   Zarr store will be created if it does not exist. If omitted, an
+    #'   in-memory Zarr store will be created.
+    #' @param read_only Optional. Logical that indicates if the store is to be
+    #'   opened in read-only mode. Default is ` NULL`, which implies `FALSE` for
+    #'   a local file system and memory store, `TRUE` otherwise.
+    #' @param protocol Optional, character string. Override automatic protocol
+    #'   detection ('local', 'http', or 's3'). Needed for S3-compatible
+    #'   endpoints that aren't AWS and don't follow AWS's hostname conventions
+    #'   (MinIO, EMBASSY Cloud, Ceph RGW, etc.) - there's no reliable way to
+    #'   recognize these from the URL alone, you have to indicate so explicitly
+    #'   rather than have this method parse the location.
+    #' @param ... Additional protocol-specific parameters passed through to the
+    #'   underlying store constructor. For `s3://` and S3 `https://` locations,
+    #'   this includes `region`, `profile`, `access_key`/`secret_key`/
+    #'   `session_token`, `endpoint`, and `anonymous` — see [zarr_s3store].
+    #'   Ignored for memory, local and plain HTTP locations.
     #' @returns A `zarr` object.
-    initialize = function(store) {
-      private$.store <- store
+    initialize = function(store, read_only = NULL, protocol = NULL, ...) {
+      private$.store <- if (missing(store) || is.null(store))
+        zarr_memorystore$new()
+      else if (inherits(store, 'zarr_store'))
+        store
+      else if (is.character(store) && length(store) == 1L) {
+        protocol <- protocol %||% .protocol(store)
+        if (is.null(read_only))
+          read_only <- protocol != 'local'
+
+        switch(protocol,
+               's3'    = {
+                 loc <- .parse_s3_location(store)
+                 zarr_s3store$new(bucket = loc$bucket, prefix = loc$prefix,
+                                  region = loc$region, endpoint = loc$endpoint,
+                                  read_only = read_only, ...)},
+               'http'  = zarr_httpstore$new(url = store),
+               'local' = zarr_localstore$new(root = store, read_only = read_only),
+               stop('Argument `store` points to an unrecognizable location: ', store, call. = FALSE)) # nocov
+      } else
+        stop('Argument `store` must be a `zarr_store` instance or a single character string', call. = FALSE)
 
       # Build the node hierarchy
       metadata <- private$.store$get_metadata('/')
-      private$.root <- .buildNode(name = '', metadata = metadata, parent = NULL, store = private$.store)
-      if (inherits(private$.root, 'zarr_group'))
-        private$.root$build_hierarchy()
+      if (!is.null(metadata)) {
+        private$.root <- .buildNode(name = '', metadata = metadata, parent = self)
+        if (inherits(private$.root, 'zarr_group'))
+          private$.root$build_hierarchy()
 
-      # Post-open processing
-      private$.root$post_open()
+        # Post-open processing
+        private$.root$post_open()
+      }
     },
 
     #' @description Print a summary of the Zarr object to the console.
+    #' @return Self, invisibly.
     print = function() {
-      fs <- inherits(private$.store, 'zarr_localstore')
-      cat('<Zarr>\n')
-      cat('Version   :', private$.store$version, '\n')
-      cat('Store     :', private$.store$friendlyClassName, '\n')
-      if (fs)
-        cat('Location  :', private$.store$root, '\n')
-      arrays <- if (inherits(private$.root, 'zarr_array')) '1 (single array store)'
+      arrays <- if (is.null(private$.root)) '(uninitialised)'
+                else if (inherits(private$.root, 'zarr_array')) '1 (single array store)'
                 else private$.root$count_arrays()
-      cat('Arrays    :', arrays, '\n')
-      if (fs)
-        cat('Total size:', .size_string(sum(file.size(list.files(private$.store$root, full.names = TRUE, recursive = TRUE)))), '\n')
-      private$.root$print_attributes()
+
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+        cli::cli_h1('{.strong Zarr}')
+        private$.store$brief()
+        cli::cli_rule('Contents')
+        cli::cli_alert_info('{.label Arrays:} {.text {arrays}}')
+        cli::cli_end(this_div)
+      } else {
+        cat('<Zarr>\n')
+        private$.store$brief()
+        cat('Arrays    :', arrays, '\n')
+      }
+      if (!is.null(private$.root))
+        private$.root$print_attributes()
+      invisible(self)
     },
 
     #' @description Print the Zarr hierarchy to the console.
     hierarchy = function() {
-      cat('<Zarr hierarchy>', private$.store$root, '\n')
-      hier <- private$.root$hierarchy_nodes(1L, 1L)
-      cat(hier, sep = '')
+      if (is.null(private$.root))
+        cat('(uninitialised)\n')
+      else {
+        if (is.list(Zarr.options$zarr_theme)) {
+          this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+          cli::cli_h1('Zarr hierarchy {private$.store$root}')
+          private$.root$hierarchy_nodes()
+          cli::cli_end(this_div)
+        } else {
+          cat('<Zarr hierarchy> ')
+          cat(private$.store$root, '\n')
+          hier <- private$.root$hierarchy_nodes(1L, 1L)
+          cat(hier, sep = '')
+        }
+      }
     },
 
     #' @description Retrieve the group or array represented by the node located
@@ -72,7 +141,7 @@ zarr <- R6::R6Class("zarr",
         return(NULL)
 
       parts <- strsplit(path, '/', fixed = TRUE)[[1L]][-1L] # Strip empty first part
-      private$.root$walk_path(parts)
+      tryCatch(private$.root$walk_path(parts), error = function(e) NULL)
     },
 
     #' @description Add a group below a given path.
@@ -83,26 +152,29 @@ zarr <- R6::R6Class("zarr",
     #'   be created.
     add_group = function(path, name) {
       parent <- self$get_node(path)
-      if (inherits(parent, 'zarr_group'))
-        parent$add_group(name)
-      else
-        NULL
+      if (inherits(parent, 'zarr_group')) parent$add_group(name)
+      else NULL
     },
 
-    #' @description Add an array in a group with a given path.
-    #' @param path The path to the group of the new array, a single character
-    #'   string.
+    #' @description Add an array to the store.
+    #' @param path Optional. The path to the group of the new array, a single
+    #'   character string. If omitted, a single-array store is assumed and the
+    #'   store must be uninitialised (meaning that it cannot already hold any
+    #'   groups or arrays).
     #' @param name The name for the new array, a single character string.
     #' @param metadata A `list` with the metadata for the new array, or a valid
     #'   [array_builder] instance.
     #' @return The newly created [zarr_array], or `NULL` if the array could not
     #'   be created.
     add_array = function(path, name, metadata) {
-      grp <- self$get_node(path)
-      if (inherits(grp, 'zarr_group')) {
-        grp$add_array(name, metadata)
-      } else
-        NULL
+      if (missing(path)) {
+        if (is.null(private$.root)) zarr_array$new(name = name, metadata = metadata, parent = self)
+        else stop('Must supply `path` argument when adding an array to a store', call. = FALSE)
+      } else {
+        grp <- self$get_node(path)
+        if (inherits(grp, 'zarr_group')) grp$add_array(name, metadata)
+        else NULL
+      }
     },
 
     #' @description Delete a group from the Zarr object. This will also delete
@@ -121,30 +193,71 @@ zarr <- R6::R6Class("zarr",
       if (inherits(grp, 'zarr_group')) {
         if (recursive)
           grp$delete_all()
-        if (!is.null(grp$parent))
+        if (inherits(grp$parent, 'zarr_group'))
           grp$parent$delete(grp$name)
       }
       invisible(self)
     },
 
     #' @description Delete an array from the Zarr object. If the array is the
-    #'   root of the Zarr object, it will be converted into a regular Zarr
-    #'   object with a root group. **Warning:** this operation is irreversible
-    #'   for many stores!
+    #'   root of the Zarr object, the Zarr object will become uninitialised.
+    #'   **Warning:** this operation is irreversible for many stores!
     #' @param path The path to the array.
     #' @return Self, invisible.
     delete_array = function(path) {
       if (path == '/') {
         # Deleting a single array Zarr: result will be a group Zarr
         if (private$.store$clear())
-          private$.root <- zarr_group$new(name = '', parent = NULL, store = private$.store,
-                                          metadata = private$.store$get_metadata(''))
+          private$.root <- NULL
       } else {
         # Deleting an array somewhere in the hierarchy
         arr <- self$get_node(path)
         if (inherits(arr, 'zarr_array'))
           arr$parent$delete(arr$name)
       }
+      invisible(self)
+    },
+
+    #' @description This method can be used to save a Zarr store to a different
+    #'   location. The entire store is persisted to the new location.
+    #'
+    #'   Note that saving a Zarr store on a local file system to another
+    #'   location on the same local file system is usually much faster with disk
+    #'   management tools of the operating system (e.g. copy/paste).
+    #'
+    #'   The new Zarr store is always written as Zarr version 3. This method can
+    #'   thus be used to quickly convert from Zarr version 2 to version 3
+    #'   stores.
+    #' @param location Character string that indicates a location where to save
+    #'   this Zarr object to. Any writable location may be used, such as a
+    #'   directory on a local file system or a bucket on a S3 server. The
+    #'   character string may contain UTF-8 characters and/or use a file URI
+    #'   format. The Zarr specification recommends that the location use the
+    #'   ".zarr" extension to identify the location as a Zarr store.
+    #' @param verbose Should feedback be provided? Default is `FALSE`. When
+    #'   `TRUE` and in interactive mode and the `cli` package is installed then
+    #'   that package will be used, otherwise standard text messages will be
+    #'   printed to the console.
+    #' @return Self, invisibly.
+    save_to = function(location, verbose = FALSE) {
+      if (is.null(private$.root))
+        stop('Cannot save an unitialised `zarr` object', call. = FALSE)
+
+      paths <- self$arrays
+      st <- vapply(paths, function(p) length(self$get_node(p)$metadata$storage_transformers) > 0L, logical(1L))
+      if (any(st))
+        stop('Cannot save arrays that use storage transformers: ',
+             paste(paths[st], collapse = ', '), call. = FALSE)
+
+      if (isTRUE(verbose)) {
+        verbose <- new.env()
+        verbose$arrays <- length(self$arrays); verbose$arrays_done <- 0L
+        verbose$groups <- length(self$groups); verbose$groups_done <- 0L
+      } else
+        verbose <- NULL
+
+      z <- zarr$new(location, read_only = FALSE)
+      private$.root$copy_to(dest = z, verbose = verbose)
       invisible(self)
     }
   ),
@@ -166,7 +279,7 @@ zarr <- R6::R6Class("zarr",
       else if (inherits(value, 'zarr_node'))
         private$.root <- value
       else
-        stop('Wrong object for setting as Zarr hierarchy root node', call. = FALSE)
+        stop('Wrong object for setting as Zarr hierarchy root node', call. = FALSE) # nocov
     },
 
     #' @field store (read-only) The store of the Zarr object.

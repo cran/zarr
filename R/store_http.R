@@ -58,7 +58,7 @@ zarr_httpstore <- R6::R6Class('zarr_httpstore',
       else if (req$status_code == 404L)
         NULL
       else
-        stop(paste("Error", req$status_code, "on key", key), call. = FALSE)
+        stop(paste("Error", req$status_code, "on key", key), call. = FALSE) # nocov
     }
   ),
   public = list(
@@ -91,7 +91,7 @@ zarr_httpstore <- R6::R6Class('zarr_httpstore',
         if (!is.null(meta)) {
           meta <- .parse_metadata(rawToChar(meta))
           if (meta$zarr_consolidated_format != 1L)
-            stop('Unsupported version of consolidated metadata.', call. = FALSE)
+            stop('Unsupported version of consolidated metadata', call. = FALSE) # nocov
 
           format <- meta$metadata$.zgroup$zarr_format
           if (is.null(format) || format != 2L)
@@ -116,6 +116,21 @@ zarr_httpstore <- R6::R6Class('zarr_httpstore',
       private$.metadata <- meta
 
       super$initialize(read_only = TRUE, version = format)
+      private$.supports_deletes <- FALSE
+      private$.supports_listing <- FALSE
+      private$.supports_writes <- FALSE
+
+    },
+
+    #' @description Print a brief summary of the HTTP store to the console. This
+    #'   will use `cli` if available.
+    brief = function() {
+      super$brief()
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+        cli::cli_alert_info('{.label URL:} {.url {private$.base_url}}')
+        cli::cli_end()
+      } else cat('URL       :', private$.base_url, '\n')
     },
 
     #' @description Check if a key exists in the store. The key can point to a
@@ -182,7 +197,7 @@ zarr_httpstore <- R6::R6Class('zarr_httpstore',
       else {
         nm <- names(private$.metadata$metadata)
         keys <- nm[startsWith(nm, prefix)]
-        paste0('/', keys)
+        if (length(keys)) paste0('/', keys) else character(0)
       }
     },
 
@@ -217,6 +232,14 @@ zarr_httpstore <- R6::R6Class('zarr_httpstore',
     #' @return A raw vector with the data pointed at by the key.
     get = function(key, prototype = NULL, byte_range = NULL) {
       private$request(key, byte_range)
+    },
+
+    #' @description Retrieve the values of several keys concurrently.
+    #' @param keys Character vector of keys.
+    #' @return A list as long as `keys` with a raw vector for each key, or
+    #'   `NULL` for a key that is not present in the store.
+    get_many = function(keys) {
+      .fetch_urls(paste(private$.base_url, keys, sep = '/'))
     },
 
     #' @description Retrieve the metadata document of the node at the location
@@ -282,14 +305,14 @@ zarr_httpstore <- R6::R6Class('zarr_httpstore',
     #' @param path,name Ignored.
     #' @return An error indicating that the group could not be created.
     create_group = function(path, name) {
-      stop('Cannot write new objects to a Zarr HTTP store.', call. = FALSE) # nocov
+      stop('Cannot write new objects to a Zarr HTTP store', call. = FALSE) # nocov
     },
 
     #' @description Creating a new array in the store is not supported.
     #' @param parent,name,metadata Ignored.
     #' @return An error indicating that the array could not be created.
     create_array = function(parent, name, metadata) {
-      stop('Cannot write new objects to a Zarr HTTP store.', call. = FALSE) # nocov
+      stop('Cannot write new objects to a Zarr HTTP store', call. = FALSE) # nocov
     }
   ),
   active = list(

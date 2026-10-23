@@ -1,6 +1,6 @@
 Package: zarr
 Title: Native and Extensible R Driver for 'Zarr'
-Version: 0.5.1
+Version: 1.0.0
 Authors@R: 
     person("Patrick", "Van Laake", , "patrick@vanlaake.net", role = c("aut", "cre", "cph"))
 Description: The 'Zarr' specification is widely used to build libraries for the storage and retrieval of n-dimensional array data from data stores ranging from local file systems to the cloud. This package is a native 'Zarr' implementation in R with support for all required features of 'Zarr' version 3. It is designed to be extensible such that new stores, codecs and extensions can be added easily.
@@ -8,17 +8,17 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 RoxygenNote: 8.0.0
 Imports: Rcpp (>= 1.0.0), blosc, jsonlite, methods, R6
-Suggests: bit64, curl, digest, future, future.apply, paws.storage, qs2,
-        testthat (>= 3.0.0), zlib
+Suggests: bit64, cli, curl, digest, future, future.apply, paws.storage,
+        qs2, testthat (>= 3.0.0), webfakes, zlib
 Config/testthat/edition: 3
 Config/Needs/website: rmarkdown
-Depends: R (>= 4.2)
+Depends: R (>= 4.4)
 LinkingTo: Rcpp
 URL: https://github.com/R-CF/zarr, https://r-cf.github.io/zarr/
 BugReports: https://github.com/R-CF/zarr/issues
 NeedsCompilation: yes
-Packaged: 2026-09-08 15:08:35 UTC; patrickvanlaake
+Packaged: 2026-10-23 10:32:28 UTC; patrickvanlaake
 Author: Patrick Van Laake [aut, cre, cph]
 Maintainer: Patrick Van Laake <patrick@vanlaake.net>
 Repository: CRAN
-Date/Publication: 2026-09-08 17:50:02 UTC
+Date/Publication: 2026-10-23 14:50:02 UTC

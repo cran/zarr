@@ -44,6 +44,7 @@ hierarchy starting from the current group, as a character vector.}
     \item \href{#method-zarr_group-count_arrays}{\code{zarr_group$count_arrays()}}
     \item \href{#method-zarr_group-add_group}{\code{zarr_group$add_group()}}
     \item \href{#method-zarr_group-add_array}{\code{zarr_group$add_array()}}
+    \item \href{#method-zarr_group-copy_to}{\code{zarr_group$copy_to()}}
     \item \href{#method-zarr_group-delete}{\code{zarr_group$delete()}}
     \item \href{#method-zarr_group-delete_all}{\code{zarr_group$delete_all()}}
   }
@@ -69,7 +70,7 @@ hierarchy starting from the current group, as a character vector.}
 exist in the store.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
-    \preformatted{zarr_group$new(name, metadata, parent, store)}
+    \preformatted{zarr_group$new(name, metadata, parent, no_create_check = FALSE)}
     \if{html}{\out{</div>}}
   }
   \subsection{Arguments}{
@@ -77,11 +78,14 @@ exist in the store.
     \describe{
       \item{\code{name}}{The name of the group. For a root group, this is the empty
 string \code{""}.}
-      \item{\code{metadata}}{List with the metadata of the group.}
+      \item{\code{metadata}}{Optional. List with the metadata of the group. If omitted
+it will default to a simple Zarr v.3 group.}
       \item{\code{parent}}{The parent \code{zarr_group} instance of this new group, can be
-missing or \code{NULL} for the root group.}
-      \item{\code{store}}{The \link{zarr_store} instance to persist data in. Ignored if
-\code{parent} is specified.}
+a \code{zarr} instance for the root group.}
+      \item{\code{no_create_check}}{Optional, logical flag to indicate if a check for
+existence of the group in the store should be made. Default is \code{FALSE}.
+Set to \code{TRUE} only when existence has been established before calling
+this method.}
     }
     \if{html}{\out{</div>}}
   }
@@ -134,9 +138,10 @@ a group to display the full group hierarchy.
   \subsection{Arguments}{
     \if{html}{\out{<div class="arguments">}}
     \describe{
-      \item{\code{idx, total}}{Arguments to control indentation. Should both be 1 (the
+      \item{\code{idx, total}}{Optional arguments to control indentation. Should both be 1 (the
 default) when called interactively. The values will be updated during
-recursion when there are groups below the current group.}
+recursion when there are groups below the current group. Ignored if
+package \code{cli} is installed.}
     }
     \if{html}{\out{</div>}}
   }
@@ -146,8 +151,8 @@ recursion when there are groups below the current group.}
 \if{html}{\out{<a id="method-zarr_group-hierarchy"></a>}}
 \if{latex}{\out{\hypertarget{method-zarr_group-hierarchy}{}}}
 \subsection{\code{zarr_group$hierarchy()}}{
-  Print the Zarr hierarchy to the console from the current
-group.
+  Print the Zarr hierarchy from the current group to the
+console.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
     \preformatted{zarr_group$hierarchy()}
@@ -267,8 +272,7 @@ should be included in the count. Default is \code{TRUE}.}
     \if{html}{\out{</div>}}
   }
   \subsection{Returns}{
-    The newly created \code{zarr_group} instance, or \code{NULL} if the group
-could not be created.
+    The newly created \code{zarr_group} instance.
   }
 }
 
@@ -295,6 +299,36 @@ definition.}
   \subsection{Returns}{
     The newly created \code{zarr_array} instance, or \code{NULL} if the array
 could not be created.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_group-copy_to"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_group-copy_to}{}}}
+\subsection{\code{zarr_group$copy_to()}}{
+  Copy this group to another group. Child objects, sub-groups
+and arrays, are recursively visited to be copied too.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_group$copy_to(dest, verbose)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{dest}}{A \code{zarr} or \code{zarr_group} instance to copy this group into.}
+      \item{\code{verbose}}{A \code{list} with details for providing feedback; empty if no
+feedback is requested.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Details}{
+    This is a method for internal use. It is called by the \link{zarr}
+\code{save_to()} method.
+  }
+  \subsection{Returns}{
+    The object in argument \code{dest} with this group and descendant
+objects copied into it.
   }
 }
 

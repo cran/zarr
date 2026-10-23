@@ -26,7 +26,7 @@ zarr_memorystore <- R6::R6Class('zarr_memorystore',
     #' @return An instance of this class.
     initialize = function() {
       super$initialize(read_only = FALSE, version = 3L)
-      private$.supports_consolidated_metadata = FALSE
+      private$.supports_consolidated_metadata <- FALSE
     },
 
     #' @description Check if a key exists in the store. The key can point to a
@@ -97,8 +97,10 @@ zarr_memorystore <- R6::R6Class('zarr_memorystore',
     #'   at the given prefix. Used internally to support resizing and
     #'   promoting arrays.
     #' @param prefix The prefix of the array whose chunk keys to retrieve.
-    #' @return A character vector of full store keys for chunk/shard files,
-    #'   excluding the array's own metadata document.
+    #' @return A character vector of full store keys under `prefix`. This
+    #'   may include keys that are not chunks, such as the metadata document
+    #'   of the array; the chunking scheme of the array selects the chunk
+    #'   keys.
     list_chunks = function(prefix) {
       keys <- names(private$.keys)
       keys[startsWith(keys, prefix)]
@@ -163,7 +165,7 @@ zarr_memorystore <- R6::R6Class('zarr_memorystore',
       } else {
         start <- byte_range[1L]
         if (start > sz)
-          stop('Byte-range of request is invalid.', call. = FALSE) # nocov
+          stop('Byte-range of request is invalid', call. = FALSE) # nocov
         if (length(byte_range) == 1L) {
           if (start >= 0L) {
             # Read to the end
@@ -178,7 +180,7 @@ zarr_memorystore <- R6::R6Class('zarr_memorystore',
         }
       }
       if (n < 1L)
-        stop('Byte-range of request is invalid.', call. = FALSE) # nocov
+        stop('Byte-range of request is invalid', call. = FALSE) # nocov
 
       return(value[(start + 1L):(start + n)]) # return(value[start:(start + n - 1L)])
     },
@@ -210,19 +212,19 @@ zarr_memorystore <- R6::R6Class('zarr_memorystore',
     },
 
     #' @description Create a new group in the store under the specified path.
-    #' @param path The path to the parent group of the new group. Ignored when
+    #' @param parent The path to the parent group of the new group. Ignored when
     #'   creating a root group.
     #' @param name The name of the new group. This may be an empty string `""`
     #'   to create a root group. It is an error to supply an empty string if a
     #'   root group or array already exists.
     #' @return A list with the metadata of the group, or an error if the group
     #'   could not be created.
-    create_group = function(path, name) {
+    create_group = function(parent, name) {
       meta <- list(zarr_format = 3, node_type = 'group')
 
       if (nzchar(name)) {
         # Adding a sub-group
-        path <- .path2key(path)
+        path <- .path2key(parent)
         key <- if (nzchar(path)) {
           if (!(path %in% names(private$.keys)))
             stop('Path does not point to a Zarr group: ', path, call. = FALSE) # nocov
@@ -275,7 +277,7 @@ zarr_memorystore <- R6::R6Class('zarr_memorystore',
     #' @field friendlyClassName (read-only) Name of the class for printing.
     friendlyClassName = function(value) {
       if (missing(value))
-        'memory store'
+        'Memory store'
     },
 
     #' @field separator (read-only) The separator of the memory store,

@@ -52,11 +52,14 @@ each array.}
 \subsection{Public methods}{
   \itemize{
     \item \href{#method-zarr_store-initialize}{\code{zarr_store$new()}}
+    \item \href{#method-zarr_store-print}{\code{zarr_store$print()}}
+    \item \href{#method-zarr_store-brief}{\code{zarr_store$brief()}}
     \item \href{#method-zarr_store-clear}{\code{zarr_store$clear()}}
     \item \href{#method-zarr_store-erase}{\code{zarr_store$erase()}}
     \item \href{#method-zarr_store-erase_prefix}{\code{zarr_store$erase_prefix()}}
     \item \href{#method-zarr_store-exists}{\code{zarr_store$exists()}}
     \item \href{#method-zarr_store-get}{\code{zarr_store$get()}}
+    \item \href{#method-zarr_store-get_many}{\code{zarr_store$get_many()}}
     \item \href{#method-zarr_store-getsize}{\code{zarr_store$getsize()}}
     \item \href{#method-zarr_store-getsize_prefix}{\code{zarr_store$getsize_prefix()}}
     \item \href{#method-zarr_store-is_empty}{\code{zarr_store$is_empty()}}
@@ -90,13 +93,44 @@ be called by descendant classes, exclusively.
     \if{html}{\out{<div class="arguments">}}
     \describe{
       \item{\code{read_only}}{Flag to indicate if the store is read-only. Default
-\code{FALSE}.}
+\code{FALSE}. If argument \code{version} is smaller than 3, the store is always
+opened in read-only mode.}
       \item{\code{version}}{The version of the Zarr store. By default this is 3.}
     }
     \if{html}{\out{</div>}}
   }
   \subsection{Returns}{
     An instance of this class.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_store-print"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_store-print}{}}}
+\subsection{\code{zarr_store$print()}}{
+  Print a summary of the store to the console. This will
+use \code{cli} if available.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_store$print()}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    Self, invisibly.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_store-brief"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_store-brief}{}}}
+\subsection{\code{zarr_store$brief()}}{
+  Print a brief summary of the store to the console. This will
+use \code{cli} if available. Specialised store classes can override this
+method to provide more details.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_store$brief()}
+    \if{html}{\out{</div>}}
   }
 }
 
@@ -215,6 +249,31 @@ starts after the end of the object, an error will be returned.}
   }
   \subsection{Returns}{
     An raw vector of data, or \code{NULL} if no data was found.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_store-get_many"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_store-get_many}{}}}
+\subsection{\code{zarr_store$get_many()}}{
+  Retrieve the values of several keys. This implementation
+retrieves them one by one; stores that can retrieve values concurrently
+override it.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_store$get_many(keys)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{keys}}{Character vector of keys.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    A list as long as \code{keys} with a raw vector for each key, or
+\code{NULL} for a key that is not present in the store.
   }
 }
 
@@ -373,8 +432,10 @@ promoting arrays.
     \if{html}{\out{</div>}}
   }
   \subsection{Returns}{
-    A character vector of full store keys for chunk/shard files,
-excluding the array's own metadata document.
+    A character vector of full store keys under \code{prefix}. This
+may include keys that are not chunks, such as the metadata document
+of the array; the chunking scheme of the array selects the chunk
+keys.
   }
 }
 

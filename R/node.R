@@ -31,11 +31,17 @@ zarr_node <- R6::R6Class('zarr_node',
     # in the domain.
     .domain = '',
 
+    # The glyph used for depicting the node when printing. Descendant classes
+    # may override this to more easily identify different classes of nodes.
+    .glyph = '#',
+
     # Print domain-specific details, if any. A domain can print any details for
     # a group or an array. Details are printed after the Zarr object details and
-    # before the attributes. If printing details, implementations should start
-    # with an empty line to create visual separation between sections. This
-    # implementation on the base class prints nothing.
+    # before the attributes. If printing details using text mode, domain
+    # implementations should start with an empty line to create visual
+    # separation between sections. For printing with `cli`, use should be made
+    # of the theme set in this package. This implementation on the base class
+    # prints nothing.
     print_details = function() {
       # Intentionally empty method
     },
@@ -54,19 +60,16 @@ zarr_node <- R6::R6Class('zarr_node',
     #' @description Initialize a new node in a Zarr hierarchy.
     #' @param name The name of the node.
     #' @param metadata List with the metadata of the node.
-    #' @param parent The parent node of this new node. Must be omitted when
-    #' initializing a root node.
-    #' @param store The store to persist data in. Ignored if `parent` is
-    #'   specified.
+    #' @param parent The parent node of this new node, either a [zarr_group] or
+    #' a [zarr] instance.
     #' @return A new instance of this class.
-    initialize = function(name, metadata, parent, store) {
-      if (missing(parent) || is.null(parent)) name <- ''
+    initialize = function(name, metadata, parent) {
+      if (inherits(parent, 'zarr')) name <- ''
       super$initialize(name)
 
       private$.metadata <- metadata
-      if (!missing(parent))
-        private$.parent <- parent
-      private$.store <- if (is.null(private$.parent)) store else parent$store
+      private$.parent <- parent
+      private$.store <- parent$store
     },
 
     #' @description This method is called automatically after a Zarr store is
@@ -151,7 +154,8 @@ zarr_node <- R6::R6Class('zarr_node',
       if (!length(node_names)) return(self)
 
       if (node_names[1L] == '..') {
-        if (is.null(private$.parent))
+        # The parent of the root node is the `zarr` object, not a node
+        if (!inherits(private$.parent, 'zarr_node'))
           stop('Target Zarr node specified beyond the root node', call. = FALSE)
         private$.parent$walk_path(node_names[-1L])
       } else {
@@ -210,7 +214,7 @@ zarr_node <- R6::R6Class('zarr_node',
     #'   existing values.
     #' @return Self, invisibly.
     append_array_attribute = function(name, value, after = NULL) {
-      private$.metadata[["attributes"]] <-
+      private$.metadata[["attributes"]] <- # NOTE: Name of super is same as here but with different signature
         super$append_array_attribute(private$.metadata[["attributes"]], name, value, after)
       private$.meta_dirty <- TRUE
       invisible(self)
@@ -248,16 +252,19 @@ zarr_node <- R6::R6Class('zarr_node',
     }
   ),
   active = list(
-    #' @field name (read-only) The name of the node.
-    name = function(value) {
-      if (missing(value))
-        private$.name
+    #' @field zarr (read-only) Retrieve the [zarr] object that manages this
+    #'   node.
+    zarr = function(value) {
+      if (missing(value)) {
+        if (inherits(private$.parent, 'zarr')) private$.parent
+        else private$.parent$zarr
+      }
     },
 
-    #' @field parent The parent of the node. For a root node this returns
-    #'   `NULL`, otherwise this `zarr_group` or `zarr_array` instance. CAUTION:
-    #'   Setting the parent of a node can invalidate the Zarr hierarchy -
-    #'   expert use only.
+    #' @field parent The parent of the node. For a root node this returns the
+    #'   `zarr` object, otherwise this `zarr_group` or `zarr_array` instance.
+    #'   CAUTION: Setting the parent of a node can invalidate the Zarr hierarchy
+    #'   - expert use only.
     parent = function(value) {
       if (missing(value))
         private$.parent

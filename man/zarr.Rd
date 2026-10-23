@@ -49,6 +49,7 @@ object, starting from the root group, as a character vector.}
     \item \href{#method-zarr-add_array}{\code{zarr$add_array()}}
     \item \href{#method-zarr-delete_group}{\code{zarr$delete_group()}}
     \item \href{#method-zarr-delete_array}{\code{zarr$delete_array()}}
+    \item \href{#method-zarr-save_to}{\code{zarr$save_to()}}
     \item \href{#method-zarr-clone}{\code{zarr$clone()}}
   }
 }
@@ -59,16 +60,44 @@ object, starting from the root group, as a character vector.}
   Create a new Zarr instance. The Zarr instance manages the
 groups and arrays in the Zarr store that it refers to. This instance
 provides access to all objects in the Zarr store.
+
+This method can open any Zarr store located on systems with a supported
+protocol ('local', 's3', 'http').
+
+This method can also create a new Zarr store on a local file system or
+in memory. It is not possible to create a new store on S3 or an a web
+server. The newly created store is uninitialised, it is an empty
+directory. Either assign a \link{zarr_array} to the \code{root} field, or create
+a root \link{zarr_group} to make the store valid and usable.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
-    \preformatted{zarr$new(store)}
+    \preformatted{zarr$new(store, read_only = NULL, protocol = NULL, ...)}
     \if{html}{\out{</div>}}
   }
   \subsection{Arguments}{
     \if{html}{\out{<div class="arguments">}}
     \describe{
-      \item{\code{store}}{An instance of a \link{zarr_store} descendant class where the
-Zarr objects are located.}
+      \item{\code{store}}{Optional. Either an instance of a \link{zarr_store} descendant
+class where the Zarr objects are located, or character string that
+indicates a location on a file system or a HTTP or S3 server where the
+Zarr store is to be found. The character string may contain UTF-8
+characters and/or use a file URI format. On a local file system the
+Zarr store will be created if it does not exist. If omitted, an
+in-memory Zarr store will be created.}
+      \item{\code{read_only}}{Optional. Logical that indicates if the store is to be
+opened in read-only mode. Default is \code{ NULL}, which implies \code{FALSE} for
+a local file system and memory store, \code{TRUE} otherwise.}
+      \item{\code{protocol}}{Optional, character string. Override automatic protocol
+detection ('local', 'http', or 's3'). Needed for S3-compatible
+endpoints that aren't AWS and don't follow AWS's hostname conventions
+(MinIO, EMBASSY Cloud, Ceph RGW, etc.) - there's no reliable way to
+recognize these from the URL alone, you have to indicate so explicitly
+rather than have this method parse the location.}
+      \item{\code{...}}{Additional protocol-specific parameters passed through to the
+underlying store constructor. For \verb{s3://} and S3 \verb{https://} locations,
+this includes \code{region}, \code{profile}, \code{access_key}/\code{secret_key}/
+\code{session_token}, \code{endpoint}, and \code{anonymous} — see \link{zarr_s3store}.
+Ignored for memory, local and plain HTTP locations.}
     }
     \if{html}{\out{</div>}}
   }
@@ -86,6 +115,9 @@ Zarr objects are located.}
     \if{html}{\out{<div class="r">}}
     \preformatted{zarr$print()}
     \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    Self, invisibly.
   }
 }
 
@@ -155,7 +187,7 @@ be created.
 \if{html}{\out{<a id="method-zarr-add_array"></a>}}
 \if{latex}{\out{\hypertarget{method-zarr-add_array}{}}}
 \subsection{\code{zarr$add_array()}}{
-  Add an array in a group with a given path.
+  Add an array to the store.
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
     \preformatted{zarr$add_array(path, name, metadata)}
@@ -164,8 +196,10 @@ be created.
   \subsection{Arguments}{
     \if{html}{\out{<div class="arguments">}}
     \describe{
-      \item{\code{path}}{The path to the group of the new array, a single character
-string.}
+      \item{\code{path}}{Optional. The path to the group of the new array, a single
+character string. If omitted, a single-array store is assumed and the
+store must be uninitialised (meaning that it cannot already hold any
+groups or arrays).}
       \item{\code{name}}{The name for the new array, a single character string.}
       \item{\code{metadata}}{A \code{list} with the metadata for the new array, or a valid
 \link{array_builder} instance.}
@@ -213,9 +247,8 @@ and all Zarr objects contained by it will be deleted.}
 \if{latex}{\out{\hypertarget{method-zarr-delete_array}{}}}
 \subsection{\code{zarr$delete_array()}}{
   Delete an array from the Zarr object. If the array is the
-root of the Zarr object, it will be converted into a regular Zarr
-object with a root group. \strong{Warning:} this operation is irreversible
-for many stores!
+root of the Zarr object, the Zarr object will become uninitialised.
+\strong{Warning:} this operation is irreversible for many stores!
   \subsection{Usage}{
     \if{html}{\out{<div class="r">}}
     \preformatted{zarr$delete_array(path)}
@@ -230,6 +263,46 @@ for many stores!
   }
   \subsection{Returns}{
     Self, invisible.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr-save_to"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr-save_to}{}}}
+\subsection{\code{zarr$save_to()}}{
+  This method can be used to save a Zarr store to a different
+location. The entire store is persisted to the new location.
+
+Note that saving a Zarr store on a local file system to another
+location on the same local file system is usually much faster with disk
+management tools of the operating system (e.g. copy/paste).
+
+The new Zarr store is always written as Zarr version 3. This method can
+thus be used to quickly convert from Zarr version 2 to version 3
+stores.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr$save_to(location, verbose = FALSE)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{location}}{Character string that indicates a location where to save
+this Zarr object to. Any writable location may be used, such as a
+directory on a local file system or a bucket on a S3 server. The
+character string may contain UTF-8 characters and/or use a file URI
+format. The Zarr specification recommends that the location use the
+".zarr" extension to identify the location as a Zarr store.}
+      \item{\code{verbose}}{Should feedback be provided? Default is \code{FALSE}. When
+\code{TRUE} and in interactive mode and the \code{cli} package is installed then
+that package will be used, otherwise standard text messages will be
+printed to the console.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    Self, invisibly.
   }
 }
 

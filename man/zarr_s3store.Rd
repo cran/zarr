@@ -41,6 +41,8 @@ passed to the methods, for performance reasons, consistent with
   \describe{
     \item{\code{friendlyClassName}}{(read-only) Name of the class for printing.}
 
+    \item{\code{service}}{(read-only) The S3 connection object.}
+
     \item{\code{root}}{(read-only) The bucket and prefix of the store, as \verb{s3://}.}
 
     \item{\code{uri}}{(read-only) The URI of the store location, identical to \code{root}.}
@@ -54,6 +56,7 @@ usually a slash '/'.}
 \subsection{Public methods}{
   \itemize{
     \item \href{#method-zarr_s3store-initialize}{\code{zarr_s3store$new()}}
+    \item \href{#method-zarr_s3store-brief}{\code{zarr_s3store$brief()}}
     \item \href{#method-zarr_s3store-exists}{\code{zarr_s3store$exists()}}
     \item \href{#method-zarr_s3store-clear}{\code{zarr_s3store$clear()}}
     \item \href{#method-zarr_s3store-erase}{\code{zarr_s3store$erase()}}
@@ -69,6 +72,7 @@ usually a slash '/'.}
     \item \href{#method-zarr_s3store-set}{\code{zarr_s3store$set()}}
     \item \href{#method-zarr_s3store-set_if_not_exists}{\code{zarr_s3store$set_if_not_exists()}}
     \item \href{#method-zarr_s3store-get}{\code{zarr_s3store$get()}}
+    \item \href{#method-zarr_s3store-get_many}{\code{zarr_s3store$get_many()}}
     \item \href{#method-zarr_s3store-get_metadata}{\code{zarr_s3store$get_metadata()}}
     \item \href{#method-zarr_s3store-set_metadata}{\code{zarr_s3store$set_metadata()}}
     \item \href{#method-zarr_s3store-is_group}{\code{zarr_s3store$is_group()}}
@@ -78,6 +82,7 @@ usually a slash '/'.}
 }
 \if{html}{\out{<details open><summary>Inherited methods</summary>
 <ul>
+  <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="print"><a href='../../zarr/html/zarr_store.html#method-zarr_store-print'><code>zarr_store$print()</code></a></span></li>
   <li><span class="pkg-link" data-pkg="zarr" data-topic="zarr_store" data-id="rename_prefix"><a href='../../zarr/html/zarr_store.html#method-zarr_store-rename_prefix'><code>zarr_store$rename_prefix()</code></a></span></li>
 </ul>
 </details>}}
@@ -145,6 +150,19 @@ permissions of the underlying credentials. Default \code{FALSE}.}
   }
   \subsection{Returns}{
     An instance of this class.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_s3store-brief"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_s3store-brief}{}}}
+\subsection{\code{zarr_s3store$brief()}}{
+  Print a brief summary of the S3 store to the console. This
+will use \code{cli} if available.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_s3store$brief()}
+    \if{html}{\out{</div>}}
   }
 }
 
@@ -314,8 +332,10 @@ promoting arrays.
     \if{html}{\out{</div>}}
   }
   \subsection{Returns}{
-    A character vector of full store keys for chunk/shard files,
-excluding the array's own metadata document.
+    A character vector of full store keys under \code{prefix}. This
+may include keys that are not chunks, such as the metadata document
+of the array; the chunking scheme of the array selects the chunk
+keys.
   }
 }
 
@@ -505,6 +525,29 @@ vector \code{c(start, end)} with an exclusive end.}
   \subsection{Returns}{
     A raw vector with the data pointed at by the key, or \code{NULL} if
 the key does not exist.
+  }
+}
+
+\if{html}{\out{<hr>}}
+\if{html}{\out{<a id="method-zarr_s3store-get_many"></a>}}
+\if{latex}{\out{\hypertarget{method-zarr_s3store-get_many}{}}}
+\subsection{\code{zarr_s3store$get_many()}}{
+  Retrieve the values of several keys concurrently.
+  \subsection{Usage}{
+    \if{html}{\out{<div class="r">}}
+    \preformatted{zarr_s3store$get_many(keys)}
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Arguments}{
+    \if{html}{\out{<div class="arguments">}}
+    \describe{
+      \item{\code{keys}}{Character vector of keys.}
+    }
+    \if{html}{\out{</div>}}
+  }
+  \subsection{Returns}{
+    A list as long as \code{keys} with a raw vector for each key, or
+\code{NULL} for a key that is not present in the store.
   }
 }
 

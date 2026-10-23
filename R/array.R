@@ -18,10 +18,6 @@ zarr_array <- R6::R6Class('zarr_array',
     # Should cells with `fill_value` be converted to `NA` or be presented "raw"?
     .raw_read = FALSE,
 
-    # The glyph used for depicting an array when printing. Descendant classes
-    # may override this to more easily identify different classes of arrays.
-    .glyph = '\u2317',
-
     # Returns a list with pre, sep and scalar elements that describe the
     # chunk key encoding of the array.
     chunk_key_encoding = function() {
@@ -34,7 +30,7 @@ zarr_array <- R6::R6Class('zarr_array',
           list(pre = paste0('c', private$.metadata$chunk_key_encoding$configuration$separator),
                sep = private$.metadata$chunk_key_encoding$configuration$separator %||% '/',
                scalar = 'c')
-        else # v2
+        else # v2 chunking
           list(pre = '',
                sep = private$.metadata$chunk_key_encoding$configuration$separator %||% '.',
                scalar = '0')
@@ -42,70 +38,140 @@ zarr_array <- R6::R6Class('zarr_array',
     }
   ),
   public = list(
-    #' @description Initialize a new array in a Zarr hierarchy. The array must
-    #'   already exist in the store.
-    #' @param name The name of the array.
-    #' @param metadata List with the metadata of the array.
-    #' @param parent The parent `zarr_group` instance of this new array, can be
-    #'   missing or `NULL` if the Zarr object should have just this array.
-    #' @param store The [zarr_store] instance to persist data in. Ignored if
-    #'   `parent` is specified.
+    #' @description Initialize a new array in a Zarr hierarchy. The array will
+    #'   be created in the store if it does not yet exist, opened otherwise.
+    #' @param name The name of the array. Ignored for a single-array store.
+    #' @param metadata List with the metadata of the array, or an instance of
+    #'   class [array_builder].
+    #' @param parent The parent [zarr_group] instance of this new array, or the
+    #'   [zarr] object for a single-array store.
+    #' @param no_create_check Optional, logical flag to indicate if a check for
+    #'   existence of the group in the store should be made. Default is `FALSE`.
+    #'   Set to `TRUE` only when existence has been established before calling
+    #'   this method.
     #' @return An instance of `zarr_array`.
-    initialize = function(name, metadata, parent, store) {
-      ab <- array_builder$new(metadata)
+    initialize = function(name, metadata, parent, no_create_check = FALSE) {
+      if (inherits(metadata, 'array_builder')) {
+        ab <- metadata
+        metadata <- ab$metadata()
+      } else ab <- array_builder$new(metadata)
       if (!ab$is_valid())
-        stop('Invalid metadata for an array.', call. = FALSE) # nocov
+        stop('Invalid metadata for an array', call. = FALSE) # nocov
 
-      super$initialize(name, metadata, parent, store)
+      if (!no_create_check) {
+        # Create the array in the store if it does not yet exist
+        if (inherits(parent, 'zarr')) {
+          # Single-array store so array goes in the store root
+          if (is.null(parent$store$get_metadata(.path2prefix(parent$path))))
+            metadata <- parent$store$create_array(name = '', metadata = metadata)
+        } else if (is.null(parent$store$get_metadata(paste0(parent$prefix, name, '/')))) {
+          metadata <- parent$store$create_array(parent = parent$path, name = name, metadata = metadata)
+        }
+      }
+
+      super$initialize(name, metadata, parent)
+      private$.glyph <- '\u2317'
+
       private$.data_type <- ab$data_type
       private$.chunking <- ab$chunk_shape
       private$.chunking$data_type <- private$.data_type
-      private$.chunking$store <- store
+      private$.chunking$store <- private$.store
       private$.chunking$array_prefix <- self$prefix
       private$.chunking$codecs <- ab$codecs
       private$.chunking$chunk_encoding <- private$chunk_key_encoding()
+
+      if (inherits(parent, 'zarr_group')) parent$set_node(self)
+      else parent$root <- self
     },
 
     #' @description Print a summary of the array to the console.
     print = function() {
       meta <- private$.metadata
-      cat('<Zarr array>', private$.glyph, private$.name, '\n')
-      cat('Path      :', self$path, '\n')
-      if (nzchar(private$.domain))
-        cat('Domain    :', private$.domain, '\n')
-      cat('Data type :', private$.data_type$data_type, '\n')
       shp <- meta$shape
-      if (length(shp)) {
-        cat('Shape     :', shp)
-        dim_names <- meta$dimension_names %||% meta$attributes$`_ARRAY_DIMENSIONS`
-        if (is.null(dim_names)) cat('\n')
-        else cat(' [', paste(dim_names, collapse = ', '), ']\n', sep = '')
-        cat('Chunking  :', meta$chunk_grid$configuration$chunk_shape, '\n')
+      dim_names <- meta$dimension_names %||% meta$attributes$`_ARRAY_DIMENSIONS`
+
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+        cli::cli_h1('Zarr array {.strong {private$.glyph}} {.strong {private$.name}}')
+        cli::cli_alert_info('{.label Path      :} {.text {self$path}}')
+        if (nzchar(private$.domain))
+          cli::cli_alert_info('{.label Domain    :} {.text {private$.domain}}')
+        cli::cli_alert_info('{.label Data type :} {.text {private$.data_type$data_type}}')
+        if (len <- length(shp)) {
+          shp <- paste(shp, collapse = ', ')
+          if (!is.null(dim_names))
+            shp <- paste0(shp, ' [', paste(dim_names[1:len], collapse = ', '), ']')
+          cli::cli_alert_info('{.label Shape     :} {.text {shp}}')
+          cli::cli_alert_info('{.label Chunk grid:} {.text {paste(private$.chunking$grid, collapse = ", ")}} {.minor [{paste(private$.chunking$chunk_shape, collapse = " x ")}]}')
+        } else {
+          cli::cli_alert_info('{.label Shape     :} {.text (scalar)}')
+          cli::cli_alert_info('{.label Chunk grid:} {.text (scalar)}')
+        }
+        cli::cli_end(this_div)
       } else {
-        cat('Shape     : (scalar)\n')
-        cat('Chunking  : (scalar)\n')
+        cat('<Zarr array>', private$.glyph, private$.name, '\n')
+        cat('Path      :', self$path, '\n')
+        if (nzchar(private$.domain))
+          cat('Domain    :', private$.domain, '\n')
+        cat('Data type :', private$.data_type$data_type, '\n')
+        if (length(shp)) {
+          cat('Shape     :', shp)
+          if (is.null(dim_names)) cat('\n')
+          else cat(' [', paste(dim_names[1:length(shp)], collapse = ', '), ']\n', sep = '')
+          cat('Chunking  :', meta$chunk_grid$configuration$chunk_shape, '\n')
+        } else {
+          cat('Shape     : (scalar)\n')
+          cat('Chunking  : (scalar)\n')
+        }
       }
       private$print_details()
       self$print_attributes()
       invisible(self)
     },
 
-    #' @description Prints the hierarchy of this array to a character string.
-    #'   Usually called from the Zarr object or a group to display the full
-    #'   group hierarchy.
-    #' @param idx,total Arguments to control indentation.
+    #' @description Produce a named character vector with a summary of the array
+    #'   including its name, data type, shape (with dimension names if
+    #'   available) and the chunking.
+    #' @return Named character vector with details of the array.
+    details = function() {
+      nm <- private$.name
+      if (!nzchar(nm))
+        nm <- '(root array)'
+      shp <- private$.metadata$shape
+      shp <- if (length(shp)) {
+        dim_names <- private$.metadata$dimension_names %||% private$.metadata$attributes$`_ARRAY_DIMENSIONS`
+        if (is.null(dim_names)) paste(shp, collapse = ', ')
+        else  paste(mapply(function(dn, shp) paste(dn, shp, sep = ' = '), dim_names, shp), collapse = ', ')
+      } else '(scalar)'
+      c(name = nm, data_type = private$.data_type$data_type, shape = shp)
+    },
+
+    #' @description Prints this array to a hierarchy. Usually called from the
+    #'   Zarr object or a group to display the full group hierarchy.
+    #' @param idx,total Arguments to control indentation. Ignored if package
+    #'   `cli` is installed.
     hierarchy_nodes = function(idx, total) {
-      if (!nzchar(private$.name))
-        paste(private$.glyph, '(root array)\n')
-      else {
-        knot <- if (idx == total) '\u2514 ' else '\u251C '
-        paste0(knot, private$.glyph, ' ', private$.name, '\n')
+      details <- self$details()
+      if (is.list(Zarr.options$zarr_theme)) {
+        this_div <- cli::cli_div(theme = append(Zarr.options$zarr_theme,
+                                                list('ul.array' = list('list-style-type' = private$.glyph))))
+        this_grp <- cli::cli_ul(class = 'array')
+        cli::cli_li('{.array {details["name"]}} {.minor [{details["data_type"]}] [{details["shape"]}]}')
+        cli::cli_end(this_grp)
+        cli::cli_end(this_div)
+      } else {
+        if (!nzchar(private$.name))
+          paste(private$.glyph, details["name"], details["shape"], '\n')
+        else {
+          knot <- if (idx == total) '\u2514 ' else '\u251C '
+          paste0(knot, private$.glyph, ' ', details["name"], ' [', details["shape"], ']\n')
+        }
       }
     },
 
     #' @description Read some or all of the array data for the array. For all
     #'   types other than logical, any data elements with the `fill_value` of
-    #'   the Zarr data type are set to `NA`.
+    #'   the Zarr data type are set to `NA` if the `raw_read` field is `TRUE`.
     #' @param selection A list as long as the array has dimensions where each
     #'   element is a range of indices along the dimension to read. If missing
     #'   or `NULL`, the entire array will be read.
@@ -121,14 +187,14 @@ zarr_array <- R6::R6Class('zarr_array',
           stop('Array selection indices are out of bounds', call. = FALSE) # nocov
         data <- private$.chunking$read(start, stop)
 
-        if (!private$.raw_read) {
-          fill <- private$.data_type$fill_value
+        fill <- private$.data_type$fill_value
+        if (!private$.raw_read && !(is.na(fill) && !is.nan(fill))) { # NA: no fill value
           Rtype <- private$.data_type$Rtype
           if (is.nan(fill))
             data[which(is.nan(data))] <- NA
-          else if (Rtype == 'integer')
+          else if (Rtype %in% c('integer', 'integer64'))
             data[data == fill] <- NA
-          else if (!(Rtype %in% c('logical', 'integer64', 'character'))) # FIXME: is.na(integer64)??
+          else if (!(Rtype %in% c('logical', 'character')))
             data[.near(data, fill)] <- NA
         }
       } else
@@ -154,9 +220,16 @@ zarr_array <- R6::R6Class('zarr_array',
     #'   chunks stale for further writing leads to better performance when
     #'   chunks are written to multiple times. Call the `flush()` method to
     #'   persist data in stale chunks.
+    #' @details An error is thrown when the selection extends beyond the
+    #'   shape of the array, including when `selection` is missing and
+    #'   `data` is larger than the array. Use `resize()` first to grow the
+    #'   array.
     #' @return Self, invisibly.
     write = function(data, selection, flush = TRUE) {
-      if (storage.mode(data) != private$.data_type$Rtype)
+      if (private$.store$read_only)
+        stop('Cannot write to a read-only Zarr store', call. = FALSE)
+      Rtype <- private$.data_type$Rtype
+      if (if (Rtype == 'integer64') !bit64::is.integer64(data) else storage.mode(data) != Rtype)
         stop('Data is of a different type than the array', call. = FALSE) # nocov
 
       ddim <- dim(data) %||% length(data)
@@ -168,7 +241,7 @@ zarr_array <- R6::R6Class('zarr_array',
           private$.chunking$write(data)
           return(invisible(self))
         } else
-          stop('Writing to a scalar array can include only a single value as `data`', call. = FALSE)
+          stop('Writing to a scalar array can include only a single value as `data`', call. = FALSE) # nocov
       }
 
       if (missing(selection))
@@ -178,6 +251,8 @@ zarr_array <- R6::R6Class('zarr_array',
         stop('`selection` list must have the same length as the shape of the array', call. = FALSE) # nocov
       start <- sapply(selection, min)
       stop  <- sapply(selection, max)
+      if (any(start < 1L | stop > array_shape))
+        stop('Array selection indices are out of bounds', call. = FALSE)
       sdim  <- stop - start + 1L
 
       if (nsel < ndata)
@@ -204,6 +279,60 @@ zarr_array <- R6::R6Class('zarr_array',
       private$.chunking$flush()
     },
 
+    #' @description Copy this array to another store. The chunks of this array
+    #'   are copied as stored and without decoding, so the copy is
+    #'   byte-identical. For a sharded array, whole shards are copied.
+    #' @details This is a method for internal use. It is called by the
+    #'   [zarr_group] `copy_to()` method, which itself is called by the [zarr]
+    #'   `save_to()` method.
+    #'
+    #'   An error is raised if this array uses storage transformers.
+    #' @param dest The `zarr` or `zarr_group` instance to copy this array into.
+    #' @param verbose A `list` with details for providing feedback; empty if no
+    #'   feedback is requested.
+    #' @return The object in argument `dest` with this array copied into it.
+    copy_to = function(dest, verbose) {
+      # Create an identical array in dest
+      arr <- zarr_array$new(private$.name, private$.metadata, dest)
+
+      # Set up the environment
+      src <- private$.chunking
+      dst <- arr$chunking
+      src$flush()
+      keys  <- src$chunk_keys()
+      skeys <- paste0(self$prefix, keys)
+
+      # Feedback
+      pb <- FALSE
+      if (!is.null(verbose)) {
+        verbose$arrays_done <- verbose$arrays_done + 1L
+        if (is.list(Zarr.options$zarr_theme)) {
+          this_div <- cli::cli_div(theme = Zarr.options$zarr_theme)
+
+          if (length(keys) > 2L) {
+            pb <- TRUE
+            cli::cli_progress_bar(format = '{.label Array} {.array {self$name}} {.label | {pb_bar} | {pb_percent}}', total = length(keys))
+          }
+        } else
+          cat(sprintf('Copying array "%s" (%d/%d)\n', self$name, verbose$arrays_done, verbose$arrays))
+      }
+
+      # Copy the raw chunks over to the new array
+      for (b in split(seq_along(keys), ceiling(seq_along(keys) / 100L))) {
+        bufs <- private$.store$get_many(skeys[b])
+        for (i in seq_along(b)) {
+          if (!is.null(bufs[[i]])) dst$write_raw(keys[b[i]], bufs[[i]])
+          if (pb) cli::cli_progress_update()
+        }
+      }
+      if (!is.null(verbose) && is.list(Zarr.options$zarr_theme)) {
+        cli::cli_alert_success('{.label Created array} {.array {private$.glyph} {self$name}} {.minor ({verbose$arrays_done}/{verbose$arrays})}')
+        cli::cli_end(this_div)
+      }
+
+      dest
+    },
+
     #' @description Resize the array, growing or shrinking any combination of
     #'   dimensions at either end in one pass. Existing chunk payload is never
     #'   rewritten, except for a chunk left straddling a shrinking, non-chunk-
@@ -219,22 +348,18 @@ zarr_array <- R6::R6Class('zarr_array',
     #'   it unchanged.
     #' @return Self, invisibly.
     resize = function(low, high) {
+      if (private$.store$read_only)
+        stop('Cannot write to a read-only Zarr store', call. = FALSE)
       shape <- private$.metadata$shape
       nd <- length(shape)
-      if (!nd) stop('Cannot resize a scalar array; see `promote()`.', call. = FALSE)
+      if (!nd) stop('Cannot resize a scalar array; see `promote()`', call. = FALSE) # nocov
       if (missing(low))  low  <- integer(nd)
       if (missing(high)) high <- integer(nd)
       if (length(low) != nd || length(high) != nd)
-        stop('`low` and `high` must have one element per dimension of the array.', call. = FALSE)
+        stop('`low` and `high` must have one element per dimension of the array', call. = FALSE)
 
-      chunk_shape <- private$.chunking$chunk_shape
-      shift <- ifelse(low >= 0L, ceiling(low / chunk_shape), -floor(-low / chunk_shape))
-      new_shape <- as.integer(shape + shift * chunk_shape + high)
-      if (any(new_shape < 1L))
-        stop('Resizing would produce a non-positive extent along one or more dimensions.', call. = FALSE)
-
-      private$.chunking$resize(new_shape, as.integer(shift), high)
-      private$.metadata$shape <- new_shape
+      private$.chunking$resize(low, high)
+      private$.metadata$shape <- private$.chunking$array_shape
       private$.meta_dirty <- TRUE
       self$save()
       invisible(self)
@@ -262,6 +387,8 @@ zarr_array <- R6::R6Class('zarr_array',
     #'   Default `1L`.
     #' @return Self, invisibly.
     promote = function(dimension, length = 1L) {
+      if (private$.store$read_only)
+        stop('Cannot write to a read-only Zarr store', call. = FALSE)
       if (inherits(private$.chunking, 'chunk_grid_sharded'))
         stop('`promote()` is not supported for sharded arrays', call. = FALSE)
 
@@ -271,7 +398,7 @@ zarr_array <- R6::R6Class('zarr_array',
       if (dimension < 1L || dimension > r + 1L)
         stop('`dimension` must be between 1 and ', r + 1L, ' for an array of rank ', r, call. = FALSE)
       if (length < 1L)
-        stop('`length` must be a positive integer', call. = FALSE)
+        stop('`length` must be a positive integer', call. = FALSE) # nocov
 
       if (r == 0L) {
         new_shape <- as.integer(length)
@@ -301,22 +428,7 @@ zarr_array <- R6::R6Class('zarr_array',
       # set_attribute()/the dedicated field once the new axis has a name.
 
       cke <- private$chunk_key_encoding()
-      if (r == 0L) {
-        scalar_key <- paste0(self$prefix, cke$scalar)
-        chunk_key  <- paste0(self$prefix, cke$pre, '0')
-        if (private$.store$exists(scalar_key))
-          private$.store$rename(scalar_key, chunk_key)
-      } else {
-        keys <- private$.store$list_chunks(self$prefix)
-        lead <- paste0(self$prefix, cke$pre)
-        for (old_key in keys) {
-          cidx     <- as.integer(strsplit(substring(old_key, nchar(lead) + 1L), cke$sep, fixed = TRUE)[[1L]])
-          new_cidx <- append(cidx, 0L, after = dimension - 1L)
-          new_key  <- paste0(lead, paste(new_cidx, collapse = cke$sep))
-          if (old_key != new_key) private$.store$rename(old_key, new_key)
-        }
-      }
-
+      private$.chunking$insert_dimension(dimension)
       private$.store$set_metadata(self$prefix, new_meta)
 
       # Rebuild live objects from the persisted metadata, exactly as
@@ -378,7 +490,7 @@ zarr_array <- R6::R6Class('zarr_array',
     raw_read = function(value) {
       if (missing(value)) private$.raw_read
       else if (is.logical(value) && length(value) == 1L) private$.raw_read <- value
-      else stop('The raw_read property must be set with a single logical value', call. = FALSE)
+      else stop('The raw_read property must be set with a single logical value', call. = FALSE) # nocov
     }
   )
 )
@@ -412,8 +524,8 @@ str.zarr_array <- function(object, ...) {
 #' @param drop If `TRUE` (the default), degenerate dimensions are dropped, if
 #'   `FALSE` they are retained in the result.
 #' @return When extracting data, a vector, matrix or array, having dimensions as
-#'   specified in the indices.
-#' @name array-indexing
+#'   specified in the indices. When replacing data, returns `x` invisibly.
+#' @rdname array-indexing
 #' @export
 #' @docType methods
 #' @examples
@@ -428,37 +540,46 @@ str.zarr_array <- function(object, ...) {
   args <- sc[-(1:2)]      # remove function name and x
   args$drop <- NULL       # remove drop if present
 
-  if ((length(args) == 1L) && (identical(args[[1L]], quote(expr = ))))
-    selection <- NULL
-  else {
-    # Replace missing indices with NULL
-    indices <- lapply(args, function(arg) {
-      if (is.symbol(arg) && identical(arg, quote(expr = )))
-        NULL
-      else
-        eval(arg, caller_env)
-    })
-
-    nd <- length(x$shape)
-    if (length(indices) != nd)
-      stop('Invalid number of selection indices for the array.', call. = FALSE) # nocov
-    selection <- vector("list", nd)
-
-    for (d in seq_len(nd)) {
-      if (is.null(indices[[d]])) {
-        # Missing index
-        selection[[d]] <- c(1L, x$shape[d])
-      } else {
-        sel <- indices[[d]]
-        if (is.logical(sel))
-          sel <- which(sel)
-        else if (any(sel < 0L))
-          sel <- setdiff(seq_len(x$shape[d]), abs(sel))
-        selection[[d]] <- range(sel)
-      }
-    }
-  }
-
+  selection <- if (length(args) == 1L && identical(args[[1L]], quote(expr = ))) NULL
+               else .index_selection(x, args, caller_env)
   data <- x$read(selection)
   if (drop) drop(data) else data
+}
+
+#' @rdname array-indexing
+#' @param value The value to assign to the Zarr array. This must have the same
+#'   shape as the slab being implied by the indices, with standard R recycling
+#'   rules applying.
+#' @export
+#' @examples
+#' arr[3, 7:9] <- 1L
+#' arr[3:5, 7:9]
+#'
+`[<-.zarr_array` <- function(x, ..., value) {
+  selection <- .index_selection(x, match.call(expand.dots = FALSE)$..., parent.frame())
+  sdim <- vapply(selection, function(s) s[2L] - s[1L] + 1L, integer(1L))
+  if (is.null(dim(value)) && length(value) == prod(sdim))
+    dim(value) <- sdim
+  x$write(value, selection)
+  invisible(x)
+}
+
+# Convert unevaluated `[` / `[<-` index arguments into a list of index ranges
+# for `zarr_array$read()` and `$write()`. Empty indices select the full extent.
+.index_selection <- function(x, args, env) {
+  nd <- length(x$shape)
+  if (length(args) != nd)
+    stop('Invalid number of selection indices for the array', call. = FALSE)
+  lapply(seq_len(nd), function(d) {
+    if (identical(args[[d]], quote(expr = ))) return(c(1L, x$shape[d]))
+    sel <- eval(args[[d]], env)
+    if (is.null(sel)) return(c(1L, x$shape[d]))
+    if (is.logical(sel)) sel <- which(sel)
+    else if (any(sel < 0L)) sel <- setdiff(seq_len(x$shape[d]), abs(sel))
+    sel <- as.integer(sel)
+    r <- range(sel)
+    if (length(sel) != r[2L] - r[1L] + 1L || anyDuplicated(sel))
+      stop('Indices must be consecutive', call. = FALSE)
+    r
+  })
 }
